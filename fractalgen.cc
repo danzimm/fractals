@@ -52,7 +52,6 @@ int main(int argc, char * const argv[]) {
         height = atoll(optarg);
         break;
       case 'v':
-        printf("Increasing verbo!\n");
         verbosity++;
         break;
       case 'c':
@@ -128,19 +127,25 @@ int main(int argc, char * const argv[]) {
 
   _colexp = colexp;
   _param = param;
-
   fractal *frac = new fractal(width, height, left, bottom, top, right, workers, maxiterations, escape);
-  
+  frac->verbosity = verbosity;
   frac->value_iterator = iteratorsym ? iteratorsym(param) : default_iterator;
   frac->colorizer = colorizersym ? colorizersym(colexp) : default_colorizer;
-
-  frac->render(false).create_image(out, fractal::fractal_color{red, green, blue});
+  if (verbosity >= 1) {
+    printf("Rendering...\n");
+  }
+  frac->render(false);
+  if (verbosity >= 1) {
+    printf("Rendering complete. Creating image\n");
+  }
+  frac->create_image(out, fractal::fractal_color{red, green, blue});
 
   free(out);
   dlclose(lib);
   if (generator)
     free(generator);
-  delete frac;
+  if (frac)
+    delete frac;
   return 0;
 }
 

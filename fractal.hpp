@@ -51,6 +51,7 @@ public:
     png8,
     png16
   };
+  int verbosity;
   uint64_t max_iterations;
 
 private:
@@ -72,7 +73,7 @@ public:
   std::function<std::complex<long double>(std::complex<long double>, std::complex<long double>, uint64_t)> value_iterator;
   std::function<fractal_color(fractal&, fractal_color, uint64_t, uint64_t, pixel_data)> colorizer;
 
-  fractal(uint64_t w, uint64_t h, long double l, long double b, long double t, long double r, uint16_t nw = 8, uint64_t max = 100, long double e = 37.0) : max_iterations(max), width(w), height(h), nworkers(nw), left(l), bottom(b), top(t), right(r), escape(e) {
+  fractal(uint64_t w, uint64_t h, long double l, long double b, long double t, long double r, uint16_t nw = 8, uint64_t max = 100, long double e = 37.0) : verbosity(0), max_iterations(max), width(w), height(h), nworkers(nw), left(l), bottom(b), top(t), right(r), escape(e) {
     nworkers &= ~1;
     xstep = (right - left) / (long double)width;
     ystep = (top - bottom) / (long double)height;
@@ -85,7 +86,7 @@ public:
   }
 
   virtual ~fractal() {
-    delete buffer;
+    delete [] buffer;
     if (queue) {
       dispatch_release(queue);
     }
@@ -130,6 +131,9 @@ public:
   }
   
   fractal& render(range<uint64_t> x, range<uint64_t> y) {
+    if (verbosity >= 1) {
+      printf("Rendering x:{%llu,%llu} y:{%llu,%llu}\n", x.first, x.last, y.first, y.last);
+    }
     uint64_t i, j;
     pixel_data tmp;
     for (i = x.first; i < x.last; i++) {
@@ -140,6 +144,9 @@ public:
           nontrivialiteration += tmp.iterations;
         }
       }
+    }
+    if (verbosity >= 1) {
+      printf("Finished rendering x:{%llu,%llu} y:{%llu,%llu}\n", x.first, x.last, y.first, y.last);
     }
     return (*this);
   }
@@ -175,46 +182,32 @@ public:
       fprintf(stderr, "ERR: Failed to create image, not done rendering!\n");
       return false;
     }
-    png_bytep *row_pointers = (png_bytep *)malloc(sizeof(png_bytep) * height);
-    uint64_t i, j;
     bool eightbit = format == image_format::png8;
-    for (i = 0; i < height; i++) { // TODO: make this more memory efficient (per row)
-      row_pointers[i] = (png_bytep)malloc(sizeof(png_byte) * width * 3 * (eightbit ? 1 : 2));
-      for (j = 0; j < width; j++) {
-        fractal_color col = color_for_pixel(color, i, j, buffer[j + (height - i - 1) * width]);
-        if (eightbit) {
-          row_pointers[i][0 + j*3] = (png_byte)floor(col.red * 255.0);
-          row_pointers[i][1 + j*3] = (png_byte)floor(col.green * 255.0);
-          row_pointers[i][2 + j*3] = (png_byte)floor(col.blue * 255.0);
-        } else {
-          ((uint16_t *)(row_pointers[i]))[0 + j*3] = (uint16_t)floor(col.red * 65535.0);
-          ((uint16_t *)(row_pointers[i]))[1 + j*3] = (uint16_t)floor(col.green * 65535.0);
-          ((uint16_t *)(row_pointers[i]))[2 + j*3] = (uint16_t)floor(col.blue * 65535.0);
-        }
-      }
-    }
+    png_bytep row_pointer = (png_bytep)malloc(sizeof(png_byte) * width * 3 * (eightbit ? 1 : 2));
+    uint64_t i, j;
+
     png_structp png_ptr = png_create_write_struct(PNG_LIBPNG_VER_STRING, NULL, NULL, NULL);
     if (!png_ptr) {
-      free(row_pointers);
+      free(row_pointer);
       fprintf(stderr, "ERR: Failed to create png write struct\n");
       return false;
     }
     png_infop info_ptr = png_create_info_struct(png_ptr);
     if (!info_ptr) {
-      free(row_pointers);
+      free(row_pointer);
       png_destroy_write_struct(&png_ptr, NULL);
       fprintf(stderr, "ERR: Failed to create png info struct\n");
       return false;
     }
     FILE *fp = fopen(name, "wb");
     if (!fp) {
-      free(row_pointers);
+      free(row_pointer);
       fprintf(stderr, "ERR: Failed to open %s for writing the png\n", name);
       fclose(fp);
       return false;
     }
     if (setjmp(png_jmpbuf(png_ptr))) {
-      free(row_pointers);
+      free(row_pointer);
       png_destroy_write_struct(&png_ptr, &info_ptr);
       fprintf(stderr, "ERR: Error from libpng! Break at line 64\n");
       return false;
@@ -225,10 +218,25 @@ public:
     png_write_info(png_ptr, info_ptr);
     if (!eightbit)
       png_set_swap(png_ptr);
-    png_write_image(png_ptr, row_pointers);
+    
+    for (i = 0; i < height; i++) { // TODO: make this more memory efficient (per row)
+      for (j = 0; j < width; j++) {
+        fractal_color col = color_for_pixel(color, i, j, buffer[j + (height - i - 1) * width]);
+        if (eightbit) {
+          row_pointer[0 + j*3] = (png_byte)floor(col.red * 255.0);
+          row_pointer[1 + j*3] = (png_byte)floor(col.green * 255.0);
+          row_pointer[2 + j*3] = (png_byte)floor(col.blue * 255.0);
+        } else {
+          ((uint16_t *)row_pointer)[0 + j*3] = (uint16_t)floor(col.red * 65535.0);
+          ((uint16_t *)row_pointer)[1 + j*3] = (uint16_t)floor(col.green * 65535.0);
+          ((uint16_t *)row_pointer)[2 + j*3] = (uint16_t)floor(col.blue * 65535.0);
+        }
+      }
+      png_write_rows(png_ptr, &row_pointer, 1);
+    }
     png_write_end(png_ptr, info_ptr);
     png_destroy_write_struct(&png_ptr, &info_ptr);
-    free(row_pointers);
+    free(row_pointer);
     fclose(fp);
     return true;
   }
