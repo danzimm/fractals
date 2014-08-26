@@ -4,17 +4,20 @@ CFLAGS=-Wall -Werror -std=c++11 -O3
 fractalgen_LDFLAGS=-lpng
 fg_LDFLAGS=-dynamiclib
 
-.PHONY: all clean
+.PHONY: all clean sc
 
-all: fractalgen valtoval.fg valtologval.fg mandlebrot.fg
+all: fractalgen valtoval.fg valtologval.fg mandlebrot.fg julia.fg
 
 clean:
 	rm -rf *.o
 	rm -rf fractalgen
 	rm -rf *.fg
 
-fractalgen: fractal.cc.o fractalgen.cc.o
-	$(CXX) $^ -o $@ $(fractalgen_LDFLAGS)
+sc:
+	rm -rf fractal.cc.o fractalgen.cc.o
+
+fractalgen: fractal.cc.o fractalgen.cc.o fractal.hpp
+	$(CXX) $(filter %.o,$^) -o $@ $(fractalgen_LDFLAGS)
 
 %.fg: %.cc
 	$(CXX) $^ -o $@ $(CFLAGS) $(fg_LDFLAGS)

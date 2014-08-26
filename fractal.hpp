@@ -6,6 +6,8 @@
 #include <complex>
 #include <cmath>
 #include <functional>
+#include <vector>
+#include <iostream>
 
 #ifndef __fractal_H
 #define __fractal_H
@@ -17,6 +19,97 @@ extern "C" {
 
 class fractal {
 public:
+  struct color {
+    long double r, g, b;
+    friend color operator*(long double multi, const color& rhs) {
+      return color{multi * rhs.r, multi * rhs.g, multi * rhs.b};
+    }
+    friend color operator+(const color& c1, const color& c2) {
+      return color{c1.r + c2.r, c1.g + c2.g, c1.b + c2.b};
+    }
+    long double& operator[](uint8_t i) {
+      switch (i) {
+        case 0:
+          return r;
+        case 1:
+          return g;
+        case 2:
+          return b;
+        default:
+          throw "Out of range";
+      }
+    }
+  };
+
+  class gradient {
+  public:
+    struct component {
+      fractal::color c;
+      long double location;
+    };
+
+  protected:
+    std::vector<component> components;
+
+    void _prepare(void) {
+      size_t s = components.size();
+      if (s > 0) {
+        std::sort(components.begin(), components.end(), [](const component& g1, const component& g2) -> bool {
+          return g1.location < g2.location;
+        });
+        /*
+        components[0].location = 0.0f;
+        if (s > 1)
+          components[s-1].location = 1.0f;
+        */
+      }
+    }
+
+  public:
+    gradient& add_color(color c) {
+      components.push_back(component{c, 0.0});
+      _prepare();
+      return (*this);
+    }
+    gradient& add_color(color c, long double loc) {
+      components.push_back(component{c, loc});
+      _prepare();
+      return (*this);
+    }
+    color color_for_location(long double loc) {
+      loc = loc < 0.0 ? 0.0 : loc;
+      loc = loc > 1.0 ? 1.0 : loc;
+      
+      component comp, compp;
+      long double scale, offset;
+      size_t i, place = (size_t)-1, s = components.size();
+      for (i = 0; i < s; i++) {
+        comp = components[i];
+        if (comp.location > loc) {
+          place = i - 1;
+          break;
+        }
+      }
+      /*
+      if (i == 0 && place == (size_t)-1) {
+        comp = components[0];
+        compp = comp;
+        scale = 1.0 / compp.location;
+      } else if (i == s && place == (size_t)-1) {
+        comp = components[s-1];
+        compp = comp;
+        scale = 1.0 / (1.0 - comp.location);
+      } else {
+      */
+        comp = components[place];
+        compp = components[place+1];
+        scale = 1.0 / (compp.location - comp.location);
+      //}
+      offset = comp.location;
+      return (1.0 - scale * (loc - offset)) * comp.c + scale * (loc - offset) * compp.c;
+    }
+
+  };
   struct pixel_data {
     uint64_t iterations;
     long double modulus;
@@ -25,27 +118,9 @@ public:
   struct range {
     T first, last;
   };
-  struct fractal_payload {
+  struct payload {
     fractal *instance;
     range<uint64_t> x, y;
-  };
-  struct fractal_color {
-    long double red, green, blue;
-    friend fractal_color operator*(long double multi, const fractal_color& rhs) {
-      return fractal_color{multi * rhs.red, multi * rhs.green, multi * rhs.blue};
-    }
-    long double& operator[](uint8_t i) {
-      switch (i) {
-        case 0:
-          return red;
-        case 1:
-          return green;
-        case 2:
-          return blue;
-        default:
-          throw "Out of range";
-      }
-    }
   };
   enum image_format {
     png8,
@@ -53,11 +128,12 @@ public:
   };
   int verbosity;
   uint64_t max_iterations;
+  long double escape;
 
 private:
-  uint64_t width, height, nontrivialiteration, nnontrivialpixels;
+  uint64_t width, height, nontrivialiteration, nnontrivialpixels, *histogram, sumhisto;
   uint16_t nworkers;
-  long double left, bottom, top, right, escape, xstep, ystep;
+  long double left, bottom, top, right, xstep, ystep;
   dispatch_queue_t queue;
   dispatch_group_t group;
   bool rendering;
@@ -66,14 +142,19 @@ private:
 protected:
   virtual void _finishRendering() {
     rendering = false;
+    uint64_t i;
+    sumhisto = 0;
+    for (i = 0; i < max_iterations; i++) {
+      sumhisto += histogram[i];
+    }
   }
 
 public:
 
   std::function<std::complex<long double>(std::complex<long double>, std::complex<long double>, uint64_t)> value_iterator;
-  std::function<fractal_color(fractal&, fractal_color, uint64_t, uint64_t, pixel_data)> colorizer;
+  std::function<color(fractal&, color, uint64_t, uint64_t, pixel_data, uint64_t *, uint64_t)> colorizer;
 
-  fractal(uint64_t w, uint64_t h, long double l, long double b, long double t, long double r, uint16_t nw = 8, uint64_t max = 100, long double e = 37.0) : verbosity(0), max_iterations(max), width(w), height(h), nworkers(nw), left(l), bottom(b), top(t), right(r), escape(e) {
+  fractal(uint64_t w, uint64_t h, long double l, long double b, long double t, long double r, uint16_t nw = 8, uint64_t max = 100, long double e = 37.0) : verbosity(0), max_iterations(max), escape(e), width(w), height(h), histogram(NULL), nworkers(nw), left(l), bottom(b), top(t), right(r) {
     nworkers &= ~1;
     xstep = (right - left) / (long double)width;
     ystep = (top - bottom) / (long double)height;
@@ -83,10 +164,12 @@ public:
     value_iterator = NULL;
     colorizer = NULL;
     rendering = false;
+    histogram = new uint64_t[max_iterations+1];
   }
 
   virtual ~fractal() {
     delete [] buffer;
+    delete [] histogram;
     if (queue) {
       dispatch_release(queue);
     }
@@ -109,23 +192,24 @@ public:
       if (i == halfworkers - 1) {
         ey = height;
       }
-      fractal_payload *payload = new fractal_payload;
-      payload->instance = this;
-      payload->x = range<uint64_t>{0, halfwidth};
-      payload->y = range<uint64_t>{by, ey};
-      dispatch_group_async_f(group, queue, payload, _fractal_worker);
-      payload = new fractal_payload;
-      payload->instance = this;
-      payload->x = range<uint64_t>{halfwidth, width};
-      payload->y = range<uint64_t>{by, ey};
-      dispatch_group_async_f(group, queue, payload, _fractal_worker);
+      payload *pl = new payload;
+      pl->instance = this;
+      pl->x = range<uint64_t>{0, halfwidth};
+      pl->y = range<uint64_t>{by, ey};
+      dispatch_group_async_f(group, queue, pl, _fractal_worker);
+      pl = new payload;
+      pl->instance = this;
+      pl->x = range<uint64_t>{halfwidth, width};
+      pl->y = range<uint64_t>{by, ey};
+      dispatch_group_async_f(group, queue, pl, _fractal_worker);
     }
-    dispatch_group_notify(group, queue, ^{
-      _finishRendering();
-    });
-    if (!async) {
+    if (async) {
+      dispatch_group_notify(group, queue, ^{
+        _finishRendering();
+      });
+    } else {
       dispatch_group_wait(group, DISPATCH_TIME_FOREVER);
-      rendering = false;
+      _finishRendering();
     }
     return (*this);
   }
@@ -160,6 +244,7 @@ public:
         break;
       }
     }
+    histogram[i]++;
     return pixel_data{i, std::norm(val)};
   }
   
@@ -174,7 +259,7 @@ public:
     return !rendering && queue != NULL;
   }
 
-  bool create_image(char *name, fractal_color color = fractal_color{1.0,1.0,1.0}, image_format format = image_format::png16) {
+  bool create_image(char *name, color c = color{1.0,1.0,1.0}, image_format format = image_format::png16) {
     if (format != image_format::png8 && format != image_format::png16) {
       throw "Unknown image format!";
     }
@@ -221,15 +306,15 @@ public:
     
     for (i = 0; i < height; i++) { // TODO: make this more memory efficient (per row)
       for (j = 0; j < width; j++) {
-        fractal_color col = color_for_pixel(color, i, j, buffer[j + (height - i - 1) * width]);
+        color col = color_for_pixel(c, i, j, buffer[j + (height - i - 1) * width]);
         if (eightbit) {
-          row_pointer[0 + j*3] = (png_byte)floor(col.red * 255.0);
-          row_pointer[1 + j*3] = (png_byte)floor(col.green * 255.0);
-          row_pointer[2 + j*3] = (png_byte)floor(col.blue * 255.0);
+          row_pointer[0 + j*3] = (png_byte)floor(col.r * 255.0);
+          row_pointer[1 + j*3] = (png_byte)floor(col.g * 255.0);
+          row_pointer[2 + j*3] = (png_byte)floor(col.b * 255.0);
         } else {
-          ((uint16_t *)row_pointer)[0 + j*3] = (uint16_t)floor(col.red * 65535.0);
-          ((uint16_t *)row_pointer)[1 + j*3] = (uint16_t)floor(col.green * 65535.0);
-          ((uint16_t *)row_pointer)[2 + j*3] = (uint16_t)floor(col.blue * 65535.0);
+          ((uint16_t *)row_pointer)[0 + j*3] = (uint16_t)floor(col.r * 65535.0);
+          ((uint16_t *)row_pointer)[1 + j*3] = (uint16_t)floor(col.g * 65535.0);
+          ((uint16_t *)row_pointer)[2 + j*3] = (uint16_t)floor(col.b * 65535.0);
         }
       }
       png_write_rows(png_ptr, &row_pointer, 1);
@@ -241,8 +326,8 @@ public:
     return true;
   }
   
-  fractal_color color_for_pixel(fractal_color input, uint64_t x, uint64_t y, pixel_data data) {
-    return colorizer ? colorizer((*this), input, x, y, data) : input;
+  color color_for_pixel(color input, uint64_t x, uint64_t y, pixel_data data) {
+    return colorizer ? colorizer((*this), input, x, y, data, histogram, sumhisto) : input;
   }
 
 };
