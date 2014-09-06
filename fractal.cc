@@ -11,3 +11,4 @@ void _fractal_worker(void *input) {
 }
 
 }
+
