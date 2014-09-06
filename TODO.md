@@ -1,0 +1,1 @@
+- Need a better way to input colors / parameters and to pass them to modules

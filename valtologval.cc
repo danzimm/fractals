@@ -9,8 +9,8 @@ std::complex<long double> valtologval_iterator(std::complex<long double> value, 
 
 extern "C" {
   
-  void *value_iterator(long double param) {
-    parameter = param;
+  void *value_iterator(long double parama, long double paramb) {
+    parameter = parama;
     return (void *)valtologval_iterator;
   }
 

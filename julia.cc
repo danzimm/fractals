@@ -30,7 +30,7 @@ extern "C" {
     return (void *)julia_iterator;
   }
   
-  void *colorizer(long double cparam) {
+  void *colorizer(long double cparam, long double red, long double green, long double blue) {
     _g.add_color(fractal::color{98.0/255.0, 118.0/255.0, 224.0/255.0}, 0.0).add_color(fractal::color{0.862745098,0.862745098,0.862745098}, 1.0)
       .add_color(fractal::color{212.0/255.0, 128.0/255.0, 93.0/255.0}, 0.2);
     _gg.add_color(fractal::color{76.0/255.0,84.0/255.0,173.0/255.0}, 0.0).add_color(fractal::color{1.0,1.0,200.0/255.0}, 1.0)

@@ -136,7 +136,7 @@ int main(int argc, char * const argv[]) {
   typedef void (*initialization_creator)(fractal&);
   
   iterator_creator (*iteratorsym)(long double, long double) = (iterator_creator (*)(long double, long double))dlsym(lib, "value_iterator");
-  colorizer_creator (*colorizersym)(long double) = (colorizer_creator (*)(long double))dlsym(lib, "colorizer");
+  colorizer_creator (*colorizersym)(long double, long double, long double, long double) = (colorizer_creator (*)(long double, long double, long double, long double))dlsym(lib, "colorizer");
   initialization_creator (*initsym)(void) = (initialization_creator (*)(void))dlsym(lib, "init");
 
   _colexp = colexp;
@@ -144,7 +144,7 @@ int main(int argc, char * const argv[]) {
   fractal *frac = new fractal(width, height, left, bottom, top, right, workers, maxiterations, escape);
   frac->verbosity = verbosity;
   frac->value_iterator = iteratorsym ? iteratorsym(parama, paramb) : default_iterator;
-  frac->colorizer = colorizersym ? colorizersym(colexp) : default_colorizer;
+  frac->colorizer = colorizersym ? colorizersym(colexp, red, green, blue) : default_colorizer;
   if (initsym) {
     initsym()(*frac);
   } else {
