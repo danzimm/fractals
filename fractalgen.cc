@@ -13,8 +13,9 @@ std::complex<long double> default_iterator(std::complex<long double> value, std:
 }
 
 fractal::color default_colorizer(fractal& instance, fractal::color color, uint64_t x, uint64_t y, fractal::pixel_data data, uint64_t *histogram, uint64_t sumhisto) {
-  if (data.iterations == instance.max_iterations)
+  if (data.iterations == instance.max_iterations) {
     return fractal::color{0.0,0.0,0.0};
+  }
   long double inp = (long double)(data.iterations) / (long double)instance.max_iterations;
   long double darkener = 1 - std::pow(1 - inp, _colexp);
   return darkener * color;

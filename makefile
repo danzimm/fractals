@@ -6,7 +6,7 @@ fg_LDFLAGS=-dynamiclib
 
 .PHONY: all clean sc
 
-all: fractalgen valtoval.fg valtologval.fg mandlebrot.fg julia.fg
+all: fractalgen valtoval.fg valtologval.fg mandlebrot.fg julia.fg mandlebrotclock.fg
 
 clean:
 	rm -rf *.o

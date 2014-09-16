@@ -14,7 +14,10 @@ var util      = require('util'),
       ["-f", "--final NUMBER", "The final parameter to create the gif"],
       ["-h", "--help", "Help"],
       ["-g", "--generator something.fg", "The generator used to render the fractals"],
-      ["-m", "--multiplier NUMBER", "The number to multiply each value in [initial final] by to be the parameter"]
+      ["-m", "--multiplier NUMBER", "The number to multiply each value in [initial final] by to be the parameter"],
+      ["-n", "--nproc NUMBER", "The max number of processes running at once, defaults to 200"],
+      ["-w", "--width NUMBER", "The width"],
+      ["--height NUMBER", "The height"]
     ],
     parser = new optparse.OptionParser(switches);
 
@@ -25,7 +28,10 @@ var outdir = "fracgif",
     initial = 20,
     end = 200,
     generator = null,
-    multiplier = 0.1;
+    multiplier = 0.1,
+    nproc = 200,
+    width = 1000,
+    height = 1000;
 
 parser.on("out", function(d, dir) {
   outdir = dir;
@@ -51,6 +57,15 @@ parser.on("generator", function(d, gen) {
 parser.on("multiplier", function(d, multi) {
   multiplier = multi;
 });
+parser.on("nproc", function(d, np) {
+  nproc = np;
+});
+parser.on("width", function(d, wi) {
+  width = wi;
+});
+parser.on("height", function(d, he) {
+  height = he;
+});
 parser.on("help", function() {
   console.log("This utility iterates through parameters from `initial` to `final` (inclusive on both) to create a series of pngs from `fractalgen`. It then creates a gif out of these png.");
   console.log(parser.toString());
@@ -59,7 +74,7 @@ parser.on("help", function() {
 
 parser.parse(process.argv);
 
-var params = [];
+var params = [], i, queuedParameters = [], running;
 for (i = initial; i <= end; i++) {
   params.push([i * multiplier, i]);
 }
@@ -82,13 +97,15 @@ function createGif() {
   }, 2500);
 }
 
-i = 0;
+i = running = 0;
 
-params.forEach(function(param, i) {
-  if (!fs.existsSync(outdir + "/" + outfilebase + param[1] + ".png")) {
-    var command = "./fractalgen -c " + color + " -p " + param[0] + " -o " + outdir + "/" + outfilebase + param[1] + ".png" + (generator ? " -g " + generator : "");
+function enqueueParameter(param) {
+  if (running < nproc) {
+    var command = "./fractalgen -w " + width + " -h " + height + " -c " + color + " -p " + param[0] + " -o " + outdir + "/" + outfilebase + param[1] + ".png" + (generator ? " -g " + generator : "");
+    running++;
     console.log(command);
     cp.exec(command, function(error, stdout, stderr) {
+      running--;
       i++;
       if (error) {
         console.log("Error: " + error + " with " + param + " : " + (stdout + '').replace("\n", "") + " : " + (stderr + '').replace("\n", ""));
@@ -97,8 +114,18 @@ params.forEach(function(param, i) {
       }
       if (i === end - initial + 1) {
         createGif();
+      } else if (queuedParameters.length > 0) {
+        enqueueParameter(queuedParameters.splice(0,1)[0]);
       }
     });
+  } else {
+    queuedParameters.push(param);
+  }
+}
+
+params.forEach(function(param, i) {
+  if (!fs.existsSync(outdir + "/" + outfilebase + param[1] + ".png")) {
+    enqueueParameter(param);
   } else {
     i++;
     if (i === (end - initial + 1)) {
