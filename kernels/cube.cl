@@ -18,13 +18,13 @@ __kernel void mandlebrot(__write_only image2d_t output, __read_only ulong4 metad
   double2 val = coord;
   ulong i = 0;
   while (i < maxiter) {
-    val = complex_pown(val, 2) + coord;
-    if (complex_mag2(val) >= 4.0) {
+    val = (val - complex_divide(complex_pown(val, 3) - (double2)(1.0, 0.0), 3 * complex_pown(val, 2)));
+    if (complex_mag2(val) >= 3.0) {
       break;
     }
     i++;
   }
-  double4 dcol = color_darkener(i, maxiter, complex_mag2(val), 4.0) * col;
+  double4 dcol = color_darkener_o(i, maxiter, complex_mag2(val), 3.0, -0.1) * col;
   dcol.w = 1.0;
 
   write_imagef(output, pos, convert_float4_sat(dcol));

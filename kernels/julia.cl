@@ -16,7 +16,6 @@ __kernel void julia(__write_only image2d_t output, __read_only ulong4 metadata, 
   double2 c = {-0.8, 0.156};
 
   double2 val = coord;
-  double2 tmp;
   ulong i = 0;
   while (i < maxiter) {
     val = complex_pown(val, 2) + c;

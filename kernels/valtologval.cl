@@ -16,7 +16,6 @@ __kernel void mandlebrot(__write_only image2d_t output, __read_only ulong4 metad
   double2 coord = {frame.x + coordsize.x * dpos.x / dimgsize.x, frame.z + coordsize.y * (dimgsize.y-dpos.y) / dimgsize.y};
 
   double2 val = coord;
-  double2 tmp;
   ulong i = 0;
   while (i < maxiter) {
     val = complex_pow(val, complex_ln(val)) + coord;

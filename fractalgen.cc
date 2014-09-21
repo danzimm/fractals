@@ -308,9 +308,15 @@ int main(int argc, char *const argv[]) {
         break;
     };
   }
+  argc -= optind;
+  argv += optind;
   if (file == NULL) {
-    std::cerr << "ERR: Need kernel name for cl program" << std::endl;
-    usage(argv[0]);
+    if (argc > 0) {
+      file = argv[0];
+    } else {
+      std::cerr << "ERR: Need kernel name for cl program" << std::endl;
+      usage(argv[0]);
+    }
   }
   
   std::string filename(file);

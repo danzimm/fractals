@@ -8,7 +8,7 @@ double2 complex_pow(double2 val, double2 w);
 double2 complex_pown(double2 val, ulong n);
 
 double2 complex_exp(double2 val) {
-  return (double2)(exp(val.x) * (cos(val.y), cos(val.y)));
+  return exp(val.x) * (double2)(cos(val.y), sin(val.y));
 }
 
 double complex_mag2(double2 val) {
@@ -38,5 +38,10 @@ double2 complex_pown(double2 val, ulong n) {
     ret = complex_mult(ret, val);
   }
   return ret;
+}
+
+double2 complex_divide(double2 vala, double2 valb) {
+  double diver = 1 / complex_mag2(valb);
+  return diver * complex_mult(vala, (double2)(valb.x, -valb.y));
 }
 

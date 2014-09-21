@@ -12,19 +12,20 @@ __kernel void mandlebrot(__write_only image2d_t output, __read_only ulong4 metad
   dpos.y += (double)(metadata.y);
   dpos.x += (double)(metadata.x);
   ulong maxiter = 100;
+  double escape = 10.0;
 
   double2 coord = {frame.x + coordsize.x * dpos.x / dimgsize.x, frame.z + coordsize.y * (dimgsize.y-dpos.y) / dimgsize.y};
-
+  
   double2 val = coord;
   ulong i = 0;
   while (i < maxiter) {
-    val = complex_pown(val, 2) + coord;
-    if (complex_mag2(val) >= 4.0) {
+    val = complex_pow(val, (double2)(2.3, 0.0)) - complex_pow(val, (double2)(1.7, 0.0)) + coord;
+    if (complex_mag2(val) >= escape) {
       break;
     }
     i++;
   }
-  double4 dcol = color_darkener(i, maxiter, complex_mag2(val), 4.0) * col;
+  double4 dcol = color_darkener(i, maxiter, complex_mag2(val), escape) * col;
   dcol.w = 1.0;
 
   write_imagef(output, pos, convert_float4_sat(dcol));
