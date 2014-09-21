@@ -125,12 +125,12 @@ cl_context create_context(cl_platform_id platform_id, cl_uint device_id_count, c
   return ctx;
 }
 
-cl_program create_program(cl_context ctx, const char *filename, cl_uint device_id_count, cl_device_id *device_ids) {
+cl_program create_program(cl_context ctx, const char *filename, cl_uint device_id_count, cl_device_id *device_ids, std::string flags) {
   std::string source = load_file(filename);
   const char *srcs[] = { source.c_str() };
   cl_program program = clCreateProgramWithSource(ctx, 1, srcs, NULL, &err);
   CL_ERR(err);
-  err = clBuildProgram(program, device_id_count, device_ids, "", NULL, NULL);
+  err = clBuildProgram(program, device_id_count, device_ids, flags.c_str(), NULL, NULL);
   if (err != CL_SUCCESS) {
     size_t tmp = 0;
     clGetProgramBuildInfo(program, device_ids[device_id_count-1], CL_PROGRAM_BUILD_LOG, 0, NULL, &tmp);
@@ -149,8 +149,24 @@ cl_command_queue create_command_queue(cl_context ctx, cl_device_id device_id) {
 }
 
 cl_kernel create_kernel(cl_context ctx, cl_program program, const char *name) {
-  cl_kernel kernel = clCreateKernel(program, name, &err);
-  CL_ERR(err);
+  cl_kernel kernel = NULL;
+  if (name == NULL) {
+    cl_uint nkern = 0;
+    CL_ERR(clCreateKernelsInProgram(program, 0, NULL, &nkern));
+    if (nkern == 0) {
+      CL_ERR(CL_INVALID_VALUE); // No kernels found in file
+    }
+    cl_kernel kernels[nkern];
+    CL_ERR(clCreateKernelsInProgram(program, nkern, kernels, NULL));
+    cl_uint i;
+    for (i = 1; i < nkern; i++) {
+      clReleaseKernel(kernels[i]);
+    }
+    kernel = kernels[0];
+  } else {
+    kernel = clCreateKernel(program, name, &err);
+    CL_ERR(err);
+  }
   return kernel;
 }
 
@@ -162,7 +178,7 @@ void render_image(cl_context ctx, cl_command_queue queue, cl_kernel kernel, uint
   CL_ERR(err);
   CL_ERR(clSetKernelArg(kernel, 0, sizeof(cl_mem), &output_img));
 
-  cl_ulong4 arg = {offsetx, offsety, totalwidth, totalheight};
+  cl_ulong4 arg = {{offsetx, offsety, totalwidth, totalheight}};
   CL_ERR(clSetKernelArg(kernel, 1, sizeof(cl_ulong4), &arg));
 
   CL_ERR(clSetKernelArg(kernel, 2, sizeof(cl_double4), &coordinateframe));
@@ -196,7 +212,7 @@ void render_image(cl_context ctx, cl_command_queue queue, cl_kernel kernel, uint
 
 void usage(const char *progname) {
   std::cout << progname << ", version " << VERSION << ", made by DanZimm" << std::endl << std::endl;
-  std::cout << "usage: " << progname << " -k KERNNAME [-m MAX_TILE_SIZE] [-w WIDTH] [-h HEIGHT] [-o OUTFILE] [-z]" << std::endl;
+  std::cout << "usage: " << progname << " -f FILE.cl [-m MAX_TILE_SIZE] [-w WIDTH] [-h [HEIGHT]] [-o OUTFILE]" << std::endl;
   std::cout << "                   [-l LEFT] [-r RIGHT] [-b BOTTOM] [-t TOP]" << std::endl << std::endl;
   std::cout << "This program take in an OpenCL program which has a kernel that takes a 2d image for writing, a ulong4 of metadata and a coordinateframe" << std::endl;
   std::cout << "where the metadata is of the form {offsetx, offsety, width, height} where offsetx/y is the offset of the tile currently being rendered" << std::endl;
@@ -205,9 +221,8 @@ void usage(const char *progname) {
   std::cout << "  -m : Specifies the max width and height a tile rendered can be. Defaults to 500" << std::endl;
   std::cout << "  -w : Specifies the width of the image to generate" << std::endl;
   std::cout << "  -h : Specifies the height of the image to generate" << std::endl;
-  std::cout << "  -k : Specifies the name of the OpenCL kernel to be used to generate the image, the OpenCL program loaded will be KERNNAME.cl" << std::endl;
+  std::cout << "  -f : Specifies the file containing the OpenCL kernel to use" << std::endl;
   std::cout << "  -o : Specifies the name of the output png" << std::endl;
-  std::cout << "  -z : Shows this help and exits" << std::endl;
   std::cout << "  -l : The left most `x' that will be rendered" << std::endl;
   std::cout << "  -r : The right most `x' that will be rendered" << std::endl;
   std::cout << "  -t : The top most `y' that will be rendered" << std::endl;
@@ -220,16 +235,16 @@ int main(int argc, char *const argv[]) {
   cl_ulong max_width = 500, max_height = 500;
   cl_ulong height = 1000;
   cl_ulong width = 1000;
-  cl_double4 coordinateframe = {-2.0, 2.0, -2.0, 2.0};
-  cl_double4 color = {1.0, 1.0, 1.0, 1.0};
-  char *file = NULL;
-  const char *kernname = NULL;
+  cl_double4 coordinateframe = {{-2.0, 2.0, -2.0, 2.0}};
+  cl_double4 color = {{1.0, 1.0, 1.0, 1.0}};
+  const char *file = NULL;
+  std::string dir("");
   const char *outfile = "out.png";
   cl_ulong row = 0;
   cl_ulong col = 0;
   
   int ch;
-  while ((ch = getopt(argc, argv, "m:w:h:k:o:zl:r:t:b:c:")) != -1) {
+  while ((ch = getopt(argc, argv, "m:w:h:f:o:l:r:t:b:c:")) != -1) {
     switch (ch) {
       case 'm':
         max_width = max_height = (cl_ulong)atoll(optarg);
@@ -242,9 +257,6 @@ int main(int argc, char *const argv[]) {
         break;
       case 'f':
         file = optarg;
-        break;
-      case 'k':
-        kernname = optarg;
         break;
       case 'o':
         outfile = optarg;
@@ -260,9 +272,6 @@ int main(int argc, char *const argv[]) {
         break;
       case 't':
         coordinateframe.s[3] = atof(optarg);
-        break;
-      case 'z':
-        usage(argv[0]);
         break;
       case 'c': {
         const char *hex = optarg;
@@ -286,24 +295,38 @@ int main(int argc, char *const argv[]) {
         color.s[2] = (long double)strtol(tmp, NULL, 16) / 255.0;
         color.s[3] = 1.0;
         } break;
+      case ':':
+        switch (optopt) {
+          case 'h':
+            usage(argv[0]);
+            break;
+          default:
+            std::cerr << "Option: " << optopt << " needs an argument!" << std::endl;            break;
+        }
       default:
         usage(argv[0]);
         break;
     };
   }
-  if (kernname == NULL) {
+  if (file == NULL) {
     std::cerr << "ERR: Need kernel name for cl program" << std::endl;
     usage(argv[0]);
   }
-  asprintf(&file, "%s.cl", kernname);
-
+  
+  std::string filename(file);
+  size_t pos = filename.rfind("/");
+  if (pos != std::string::npos) {
+    dir = filename.substr(0, pos);
+  }
+  std::string flags = "-I " + (dir.size() == 0 ? "." : dir);
+  
   cl_platform_id platform_id;
   cl_device_id *device_ids;
   cl_uint device_id_count;
   fetch_platform_device_ids(&platform_id, &device_id_count, &device_ids);
   cl_context ctx = create_context(platform_id, device_id_count, device_ids);
-  cl_program program = create_program(ctx, file, device_id_count, device_ids);
-  cl_kernel kernel = create_kernel(ctx, program, kernname);
+  cl_program program = create_program(ctx, file, device_id_count, device_ids, flags);
+  cl_kernel kernel = create_kernel(ctx, program, NULL);
   
   cl_command_queue queue = create_command_queue(ctx, device_ids[device_id_count-1]);
   
@@ -339,7 +362,6 @@ int main(int argc, char *const argv[]) {
   CL_ERR(clReleaseProgram(program));
   CL_ERR(clReleaseContext(ctx));
   free(device_ids);
-  free(file);
   return 0;
 }
 

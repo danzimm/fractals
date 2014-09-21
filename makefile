@@ -1,10 +1,9 @@
 
 CXX=clang++
-CFLAGS=-Wall -Werror -std=c++11 -O3
-fractalgen_LDFLAGS=-lpng
-fg_LDFLAGS=-dynamiclib
+CFLAGS=-Wall -Werror -std=c++1y -O3
+fractalgen_LDFLAGS=-lpng -framework OpenCL
 
-.PHONY: all clean sc
+.PHONY: all clean
 
 all: fractalgen
 
@@ -12,10 +11,7 @@ clean:
 	rm -rf *.o
 	rm -rf fractalgen
 
-sc:
-	rm -rf fractal.cc.o fractalgen.cc.o
-
-fractalgen: fractal.cc.o fractalgen.cc.o fractal.hpp
+fractalgen: fractalgen.cc.o
 	$(CXX) $(filter %.o,$^) -o $@ $(fractalgen_LDFLAGS)
 
 %.cc.o: %.cc

@@ -1,15 +1,6 @@
 
 #include "complex.cl"
-
-double color_darkener(ulong i, ulong m, double mag, double mmag) {
-  if (i < m) {
-    double inp = (double)(i) / (double)(m);
-    double x = mmag / mag;
-    x = (x / (double)(m) + inp) - 0.2;
-    return 1 / (1.0 + exp(-15.0 * x));
-  }
-  return 0.0;
-}
+#include "colors.cl"
 
 __kernel void mandlebrot(__write_only image2d_t output, __read_only ulong4 metadata, double4 frame, double4 col) {
 
@@ -28,8 +19,8 @@ __kernel void mandlebrot(__write_only image2d_t output, __read_only ulong4 metad
   double2 tmp;
   ulong i = 0;
   while (i < maxiter) {
-    val = complex_pow(val, complex_ln(val)) + coord;
-    if (complex_mag2(val) >= 4) {
+    val = complex_pown(val, 2) + coord;
+    if (complex_mag2(val) >= 4.0) {
       break;
     }
     i++;
