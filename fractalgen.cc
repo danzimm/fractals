@@ -170,7 +170,7 @@ cl_kernel create_kernel(cl_context ctx, cl_program program, const char *name) {
   return kernel;
 }
 
-void render_image(cl_context ctx, cl_command_queue queue, cl_kernel kernel, uint8_t *buffer, cl_ulong offsetx, cl_ulong offsety, cl_ulong width, cl_ulong height, cl_ulong totalwidth, cl_ulong totalheight, cl_double4 coordinateframe, cl_double4 color) {
+void render_image(cl_context ctx, cl_command_queue queue, cl_kernel kernel, uint8_t *buffer, cl_ulong offsetx, cl_ulong offsety, cl_ulong width, cl_ulong height, cl_ulong totalwidth, cl_ulong totalheight, cl_double4 coordinateframe, cl_double4 color, cl_ulong max_iterations, cl_double escape) {
   
   static const cl_image_format format = { CL_RGBA, CL_UNORM_INT8 };
   static const cl_image_desc img_desc = { CL_MEM_OBJECT_IMAGE2D, width, height, 0, 0, 0, 0, 0, 0, NULL };
@@ -183,6 +183,8 @@ void render_image(cl_context ctx, cl_command_queue queue, cl_kernel kernel, uint
 
   CL_ERR(clSetKernelArg(kernel, 2, sizeof(cl_double4), &coordinateframe));
   CL_ERR(clSetKernelArg(kernel, 3, sizeof(cl_double4), &color));
+  CL_ERR(clSetKernelArg(kernel, 4, sizeof(cl_ulong), &max_iterations));
+  CL_ERR(clSetKernelArg(kernel, 5, sizeof(cl_double), &escape));
 
   size_t work_offsets[] = {0, 0, 0};
   size_t work_sizes[] = {width, height, 0};
@@ -213,21 +215,25 @@ void render_image(cl_context ctx, cl_command_queue queue, cl_kernel kernel, uint
 void usage(const char *progname) {
   std::cout << progname << ", version " << VERSION << ", made by DanZimm" << std::endl << std::endl;
   std::cout << "usage: " << progname << " -f FILE.cl [-m MAX_TILE_SIZE] [-w WIDTH] [-h [HEIGHT]] [-o OUTFILE]" << std::endl;
-  std::cout << "                   [-l LEFT] [-r RIGHT] [-b BOTTOM] [-t TOP]" << std::endl << std::endl;
-  std::cout << "This program take in an OpenCL program which has a kernel that takes a 2d image for writing, a ulong4 of metadata and a coordinateframe" << std::endl;
-  std::cout << "where the metadata is of the form {offsetx, offsety, width, height} where offsetx/y is the offset of the tile currently being rendered" << std::endl;
+  std::cout << "                   [-l LEFT] [-r RIGHT] [-b BOTTOM] [-t TOP] [-i ITER] [-e ESCAPE] [-k]" << std::endl << std::endl;
+  std::cout << "This program take in an OpenCL program which has a kernel that takes a 2d image for writing, a ulong4 of metadata," << std::endl;
+  std::cout << "a double4 for the frame, a ulong denoting the maximum number of iterations and a double for the escape value squared." << std::endl;
+  std::cout << "The metadata is of the form {offsetx, offsety, width, height} where offsetx/y is the offset of the tile currently being rendered" << std::endl;
   std::cout << "(i.e. the pixel coordinate of the tile being rendered) and width/height are the total width/height of the entire image." << std::endl;
+  std::cout << "The frame is of the form {left, right, bottom, top} denoting the bounds on the frame of the image to generate." << std::endl;
   std::cout << "This was originally created in order to generate fractals but can be used to generate any image that needs to be big." << std::endl << std::endl;
   std::cout << "  -m : Specifies the max width and height a tile rendered can be. Defaults to 500" << std::endl;
   std::cout << "  -w : Specifies the width of the image to generate" << std::endl;
   std::cout << "  -h : Specifies the height of the image to generate" << std::endl;
   std::cout << "  -f : Specifies the file containing the OpenCL kernel to use" << std::endl;
   std::cout << "  -o : Specifies the name of the output png" << std::endl;
+  std::cout << "  -i : The maximum number of iterations to check if a sequence has diverged" << std::endl;
+  std::cout << "  -e : The escape value squared to tell us if a sequence has diverged or not" << std::endl;
   std::cout << "  -l : The left most `x' that will be rendered" << std::endl;
   std::cout << "  -r : The right most `x' that will be rendered" << std::endl;
   std::cout << "  -t : The top most `y' that will be rendered" << std::endl;
-  std::cout << "  -b : The bottom most `y' that will be rendered" << std::endl;
   std::cout << "    The last 4 parameters set up the coordinate system for the image to be rendered." << std::endl;
+  std::cout << "  -k : Keep the ratio in the coordinate system as created by the inputted width / height" << std::endl;
   exit(0);
 }
 
@@ -242,10 +248,18 @@ int main(int argc, char *const argv[]) {
   const char *outfile = "out.png";
   cl_ulong row = 0;
   cl_ulong col = 0;
+  cl_ulong max_iterations = 100;
+  cl_double escape = 4.0;
   
   int ch;
-  while ((ch = getopt(argc, argv, "m:w:h:f:o:l:r:t:b:c:")) != -1) {
+  while ((ch = getopt(argc, argv, "m:w:h:f:o:l:r:t:b:c:i:e:k")) != -1) {
     switch (ch) {
+      case 'i':
+        max_iterations = atoll(optarg);
+        break;
+      case 'e':
+        escape = atof(optarg);
+        break;
       case 'm':
         max_width = max_height = (cl_ulong)atoll(optarg);
         break;
@@ -301,8 +315,16 @@ int main(int argc, char *const argv[]) {
             usage(argv[0]);
             break;
           default:
-            std::cerr << "Option: " << optopt << " needs an argument!" << std::endl;            break;
+            std::cerr << "Option: -" << optopt << " needs an argument!" << std::endl;
+            break;
         }
+        break;
+      case 'k': {
+          cl_double ratio = (cl_double)height / (cl_double)width;
+          cl_double hframe = ratio * (coordinateframe.s[1] - coordinateframe.s[0]);
+          coordinateframe.s[2] = hframe / 2;
+          coordinateframe.s[3] = - hframe / 2;
+        } break;
       default:
         usage(argv[0]);
         break;
@@ -354,7 +376,7 @@ int main(int argc, char *const argv[]) {
         newcol = width;
       }
       std::cout << "Rendering tile " << col << ", " << row << std::endl;
-      render_image(ctx, queue, kernel, buffer, col, row, newcol - col, newrow - row, width, height, coordinateframe, color);
+      render_image(ctx, queue, kernel, buffer, col, row, newcol - col, newrow - row, width, height, coordinateframe, color, max_iterations, escape);
       col = newcol;
     }
     row = newrow;

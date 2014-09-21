@@ -1,7 +1,7 @@
 
 #include "complex.cl"
 
-__kernel void mandlebrot(__write_only image2d_t output, __read_only ulong4 metadata, double4 frame, double4 col) {
+__kernel void valtoval(__write_only image2d_t output, __read_only ulong4 metadata, double4 frame, double4 col, ulong maxiter, double escape) {
 
   const int2 pos = {get_global_id(0), get_global_id(1)};
   double2 coordsize = {frame.y - frame.x, frame.w - frame.z};
@@ -10,7 +10,6 @@ __kernel void mandlebrot(__write_only image2d_t output, __read_only ulong4 metad
   double2 dpos = convert_double2(pos);
   dpos.y += (double)(metadata.y);
   dpos.x += (double)(metadata.x);
-  ulong maxiter = 100;
 
   double2 coord = {frame.x + coordsize.x * dpos.x / dimgsize.x, frame.z + coordsize.y * (dimgsize.y-dpos.y) / dimgsize.y};
 
@@ -18,7 +17,7 @@ __kernel void mandlebrot(__write_only image2d_t output, __read_only ulong4 metad
   ulong i = 0;
   while (i < maxiter) {
     val = complex_pow(val, val) + coord;
-    if (complex_mag2(val) >= 37) {
+    if (complex_mag2(val) >= escape) {
       break;
     }
     i++;
