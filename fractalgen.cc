@@ -1,171 +1,345 @@
 
+#include <OpenCL/opencl.h>
+#include <vector>
+#include <iostream>
+#include <fstream>
+#include <cstdlib>
+#include <cstdint>
+#include <png.h>
 #include <unistd.h>
-#include <dlfcn.h>
-#include <float.h>
-#include "fractal.hpp"
 
-static std::complex<long double> _param = 0.0f;
-static long double _colexp = 4.0f;
-static long double _totalpix = 0.0f;
+#ifndef VERSION
+#define VERSION 0.1
+#endif
 
-std::complex<long double> default_iterator(std::complex<long double> value, std::complex<long double> initial, uint64_t i) {
-  return std::pow(value, _param) - value * std::sqrt(value) + initial;
+static cl_int err = CL_SUCCESS;
+
+#define CL_ERR( line ) \
+  if ( (err = ( line )) != CL_SUCCESS) { \
+    std::cerr << "Error (" << err << ") at line: " << __LINE__ << " - " << #line << std::endl; \
+    exit(1); \
+  } \
+
+void fetch_device_info(cl_device_id id, cl_device_info inf, std::string& desc) {
+  size_t s;
+  CL_ERR(clGetDeviceInfo(id, inf, 0, NULL, &s));
+  desc.resize(s);
+  CL_ERR(clGetDeviceInfo(id, inf, s, const_cast<char*>(desc.data()), NULL));
 }
 
-fractal::color default_colorizer(fractal& instance, fractal::color color, uint64_t x, uint64_t y, fractal::pixel_data data, uint64_t *histogram, uint64_t sumhisto) {
-  if (data.iterations == instance.max_iterations) {
-    return fractal::color{0.0,0.0,0.0};
+void fetch_device_description(cl_device_id id, std::string& desc) {
+  static cl_device_info infs[] = {CL_DEVICE_NAME, CL_DEVICE_VENDOR, CL_DEVICE_VERSION, CL_DRIVER_VERSION, CL_DEVICE_OPENCL_C_VERSION, CL_DEVICE_PROFILE, CL_DEVICE_EXTENSIONS};
+  size_t i;
+  for (i = 0; i < sizeof(infs) / sizeof(infs[0]); i++) {
+    std::string tmp;
+    fetch_device_info(id, infs[i], tmp);
+    desc.append(tmp).append(" ");
   }
-  long double inp = (long double)(data.iterations) / (long double)instance.max_iterations;
-  long double darkener = 1 - std::pow(1 - inp, _colexp);
-  return darkener * color;
+  desc.pop_back();
 }
 
-int main(int argc, char * const argv[]) {
+void fetch_platform_info(cl_platform_id id, cl_platform_info inf, std::string& desc) {
+  size_t s;
+  CL_ERR(clGetPlatformInfo(id, inf, 0, NULL, &s));
+  desc.resize(s);
+  CL_ERR(clGetPlatformInfo(id, inf, s, const_cast<char*>(desc.data()), NULL));
+}
 
-  int ch, verbosity = 0, workers = 8, depth = 16;
-  long double right, left, top, bottom, red, green, blue, escape = 37.0, colexp = 4.0, parama = LDBL_MIN, paramb = LDBL_MIN;
-  uint64_t width, height, maxiterations;
-  char *out = (char *)malloc(8), *generator = NULL;
-  strcpy(out, "out.png");
-  bool keepsratio = false;
-  right = top = 2.0;
-  bottom = left = -2.0;
-  red = green = blue = 1.0;
-  maxiterations = 100;
-  width = height = 1000;
+void fetch_platform_description(cl_platform_id id, std::string& desc) {
+  static cl_platform_info infs[] = {CL_PLATFORM_NAME, CL_PLATFORM_VENDOR, CL_PLATFORM_VERSION, CL_PLATFORM_PROFILE, CL_PLATFORM_EXTENSIONS};
+  size_t i;
+  for (i = 0; i < sizeof(infs) / sizeof(infs[0]); i++) {
+    std::string tmp;
+    fetch_platform_info(id, infs[i], tmp);
+    desc.append(tmp).append(" ");
+  }
+  desc.pop_back();
+}
+
+std::string load_file(const std::string filename) {
+  std::ifstream in(filename);
+  return std::string(std::istreambuf_iterator<char>(in), std::istreambuf_iterator<char>());
+}
+
+void save_png(const char *filename, uint8_t *buffer, cl_ulong width, cl_ulong height) {
+  png_structp png_ptr = png_create_write_struct(PNG_LIBPNG_VER_STRING, NULL, NULL, NULL);
+  if (!png_ptr) {
+    std::cerr << "Failed to create png write struct" << std::endl;
+    return;
+  }
+  png_infop info_ptr = png_create_info_struct(png_ptr);
+  if (!info_ptr) {
+    std::cerr << "Failed to create info_ptr" << std::endl;
+    png_destroy_write_struct(&png_ptr, NULL);
+    return;
+  }
+  FILE *fp = fopen(filename, "wb");
+  if (!fp) {
+    std::cerr << "Failed to open " << filename << " for writing" << std::endl;
+    png_destroy_write_struct(&png_ptr, &info_ptr);
+    return;
+  }
+  if (setjmp(png_jmpbuf(png_ptr))) {
+    png_destroy_write_struct(&png_ptr, &info_ptr);
+    std::cerr << "Error from libpng!" << std::endl;
+    return;
+  }
+  png_init_io(png_ptr, fp);
+  png_set_IHDR(png_ptr, info_ptr, width, height, 8, PNG_COLOR_TYPE_RGBA, PNG_INTERLACE_NONE, PNG_COMPRESSION_TYPE_DEFAULT, PNG_FILTER_TYPE_DEFAULT);
+  png_write_info(png_ptr, info_ptr);
+  png_byte *row_pnts[height];
+  size_t i;
+  for (i = 0; i < height; i++) {
+    row_pnts[i] = buffer + width * 4 * i;
+  }
+  png_write_image(png_ptr, row_pnts);
+  png_write_end(png_ptr, info_ptr);
+  png_destroy_write_struct(&png_ptr, &info_ptr);
+  fclose(fp);
+}
+
+cl_int fetch_platform_device_ids(cl_platform_id *platform_id, cl_uint *device_id_count, cl_device_id **device_ids) {
+  cl_uint nids = 0;
+  CL_ERR(clGetPlatformIDs(0, NULL, &nids));
+  if (nids == 0) {
+    std::cerr << "Failed to find an opencl platform!" << std::endl;
+    return CL_OUT_OF_HOST_MEMORY;
+  }
+  CL_ERR(clGetPlatformIDs(1, platform_id, NULL));
+
+  CL_ERR(clGetDeviceIDs(*platform_id, CL_DEVICE_TYPE_ALL, 0, NULL, &nids));
+  if (nids == 0) {
+    std::cerr << "Failed to find an opencl device!" << std::endl;
+  }
+  cl_device_id *dev_ids = (cl_device_id*)malloc(sizeof(cl_device_id) * nids);
+  CL_ERR(clGetDeviceIDs(*platform_id, CL_DEVICE_TYPE_ALL, nids, dev_ids, NULL));
+  *device_ids = dev_ids;
+  *device_id_count = nids;
+  return CL_SUCCESS;
+}
+
+cl_context create_context(cl_platform_id platform_id, cl_uint device_id_count, cl_device_id *device_ids) {
+  const cl_context_properties contextProperties[] = { CL_CONTEXT_PLATFORM, reinterpret_cast<cl_context_properties>(platform_id), 0 };
+  cl_context ctx = clCreateContext(contextProperties, device_id_count, device_ids, NULL, NULL, &err);
+  CL_ERR(err);
+  return ctx;
+}
+
+cl_program create_program(cl_context ctx, const char *filename, cl_uint device_id_count, cl_device_id *device_ids) {
+  std::string source = load_file(filename);
+  const char *srcs[] = { source.c_str() };
+  cl_program program = clCreateProgramWithSource(ctx, 1, srcs, NULL, &err);
+  CL_ERR(err);
+  err = clBuildProgram(program, device_id_count, device_ids, "", NULL, NULL);
+  if (err != CL_SUCCESS) {
+    size_t tmp = 0;
+    clGetProgramBuildInfo(program, device_ids[device_id_count-1], CL_PROGRAM_BUILD_LOG, 0, NULL, &tmp);
+    std::string log(tmp, ' ');
+    clGetProgramBuildInfo(program, device_ids[device_id_count-1], CL_PROGRAM_BUILD_LOG, tmp, const_cast<char*>(log.c_str()), NULL);
+    std::cout << "Build error: " << log << std::endl;
+    exit(1);
+  }
+  return program;
+}
+
+cl_command_queue create_command_queue(cl_context ctx, cl_device_id device_id) {
+  cl_command_queue queue = clCreateCommandQueue(ctx, device_id, 0, &err);
+  CL_ERR(err);
+  return queue;
+}
+
+cl_kernel create_kernel(cl_context ctx, cl_program program, const char *name) {
+  cl_kernel kernel = clCreateKernel(program, name, &err);
+  CL_ERR(err);
+  return kernel;
+}
+
+void render_image(cl_context ctx, cl_command_queue queue, cl_kernel kernel, uint8_t *buffer, cl_ulong offsetx, cl_ulong offsety, cl_ulong width, cl_ulong height, cl_ulong totalwidth, cl_ulong totalheight, cl_double4 coordinateframe, cl_double4 color) {
   
-  while ((ch = getopt(argc, argv, "r:l:t:b:w:h:vc:m:ho:n:e:d:kj:p:g:")) != -1) {
+  static const cl_image_format format = { CL_RGBA, CL_UNORM_INT8 };
+  static const cl_image_desc img_desc = { CL_MEM_OBJECT_IMAGE2D, width, height, 0, 0, 0, 0, 0, 0, NULL };
+  cl_mem output_img = clCreateImage(ctx, CL_MEM_WRITE_ONLY, &format, &img_desc, NULL, &err);
+  CL_ERR(err);
+  CL_ERR(clSetKernelArg(kernel, 0, sizeof(cl_mem), &output_img));
+
+  cl_ulong4 arg = {offsetx, offsety, totalwidth, totalheight};
+  CL_ERR(clSetKernelArg(kernel, 1, sizeof(cl_ulong4), &arg));
+
+  CL_ERR(clSetKernelArg(kernel, 2, sizeof(cl_double4), &coordinateframe));
+  CL_ERR(clSetKernelArg(kernel, 3, sizeof(cl_double4), &color));
+
+  size_t work_offsets[] = {0, 0, 0};
+  size_t work_sizes[] = {width, height, 0};
+  CL_ERR(clEnqueueNDRangeKernel(queue, kernel, 2, work_offsets, work_sizes, NULL, 0, NULL, NULL));
+    
+  size_t origin[3] = {0, 0, 0};
+  size_t region[3] = {width, height, 1};
+  uint8_t *tmp = (uint8_t *)malloc(width * height * sizeof(uint8_t) * 4);
+  if (!tmp) {
+    std::cerr << "Failed to allocate tmp!" << std::endl;
+  }
+  CL_ERR(clEnqueueReadImage(queue, output_img, CL_TRUE, origin, region, 0, 0, tmp, 0, NULL, NULL));
+  /*
+  static cl_ulong counter = 0;
+  char *tmpn = NULL;
+  asprintf(&tmpn, "out%llu.png", counter++);
+  save_png(tmpn, tmp, width, height);
+  free(tmpn);
+  */
+  cl_ulong i;
+  for (i = 0; i < height; i++) {
+    memcpy(buffer + totalwidth * 4 * (offsety + i) + offsetx * 4, tmp + width * 4 * i, width*4);
+  }
+  free(tmp);
+  CL_ERR(clReleaseMemObject(output_img));
+}
+
+void usage(const char *progname) {
+  std::cout << progname << ", version " << VERSION << ", made by DanZimm" << std::endl << std::endl;
+  std::cout << "usage: " << progname << " -k KERNNAME [-m MAX_TILE_SIZE] [-w WIDTH] [-h HEIGHT] [-o OUTFILE] [-z]" << std::endl;
+  std::cout << "                   [-l LEFT] [-r RIGHT] [-b BOTTOM] [-t TOP]" << std::endl << std::endl;
+  std::cout << "This program take in an OpenCL program which has a kernel that takes a 2d image for writing, a ulong4 of metadata and a coordinateframe" << std::endl;
+  std::cout << "where the metadata is of the form {offsetx, offsety, width, height} where offsetx/y is the offset of the tile currently being rendered" << std::endl;
+  std::cout << "(i.e. the pixel coordinate of the tile being rendered) and width/height are the total width/height of the entire image." << std::endl;
+  std::cout << "This was originally created in order to generate fractals but can be used to generate any image that needs to be big." << std::endl << std::endl;
+  std::cout << "  -m : Specifies the max width and height a tile rendered can be. Defaults to 500" << std::endl;
+  std::cout << "  -w : Specifies the width of the image to generate" << std::endl;
+  std::cout << "  -h : Specifies the height of the image to generate" << std::endl;
+  std::cout << "  -k : Specifies the name of the OpenCL kernel to be used to generate the image, the OpenCL program loaded will be KERNNAME.cl" << std::endl;
+  std::cout << "  -o : Specifies the name of the output png" << std::endl;
+  std::cout << "  -z : Shows this help and exits" << std::endl;
+  std::cout << "  -l : The left most `x' that will be rendered" << std::endl;
+  std::cout << "  -r : The right most `x' that will be rendered" << std::endl;
+  std::cout << "  -t : The top most `y' that will be rendered" << std::endl;
+  std::cout << "  -b : The bottom most `y' that will be rendered" << std::endl;
+  std::cout << "    The last 4 parameters set up the coordinate system for the image to be rendered." << std::endl;
+  exit(0);
+}
+
+int main(int argc, char *const argv[]) {
+  cl_ulong max_width = 500, max_height = 500;
+  cl_ulong height = 1000;
+  cl_ulong width = 1000;
+  cl_double4 coordinateframe = {-2.0, 2.0, -2.0, 2.0};
+  cl_double4 color = {1.0, 1.0, 1.0, 1.0};
+  char *file = NULL;
+  const char *kernname = NULL;
+  const char *outfile = "out.png";
+  cl_ulong row = 0;
+  cl_ulong col = 0;
+  
+  int ch;
+  while ((ch = getopt(argc, argv, "m:w:h:k:o:zl:r:t:b:c:")) != -1) {
     switch (ch) {
-      case 'r':
-        right = strtold(optarg, NULL);
-        break;
-      case 'l':
-        left = strtold(optarg, NULL);
-        break;
-      case 't':
-        top = strtold(optarg, NULL);
-        break;
-      case 'b':
-        bottom = strtold(optarg, NULL);
+      case 'm':
+        max_width = max_height = (cl_ulong)atoll(optarg);
         break;
       case 'w':
-        width = atoll(optarg);
+        width = (cl_ulong)atoll(optarg);
         break;
       case 'h':
-        height = atoll(optarg);
+        height = (cl_ulong)atoll(optarg);
         break;
-      case 'v':
-        verbosity++;
+      case 'f':
+        file = optarg;
         break;
-      case 'c':
-        if (optarg[0] == '#') {
-          optarg++;
+      case 'k':
+        kernname = optarg;
+        break;
+      case 'o':
+        outfile = optarg;
+        break;
+      case 'l':
+        coordinateframe.s[0] = atof(optarg);
+        break;
+      case 'r':
+        coordinateframe.s[1] = atof(optarg);
+        break;
+      case 'b':
+        coordinateframe.s[2] = atof(optarg);
+        break;
+      case 't':
+        coordinateframe.s[3] = atof(optarg);
+        break;
+      case 'z':
+        usage(argv[0]);
+        break;
+      case 'c': {
+        const char *hex = optarg;
+        size_t len = strlen(hex);
+        if (len < 6 && len > 7) {
+          usage(argv[0]);
         }
-        if (strlen(optarg) != 6) {
-          fprintf(stderr, "Need a color with 6 hex nibbles\n");
-          return -1;
+        if (len == 7) {
+          hex = hex + 1;
         }
         char tmp[3];
         tmp[2] = '\0';
-        tmp[0] = optarg[0];
-        tmp[1] = optarg[1];
-        red = (long double)strtol(tmp, NULL, 16) / 255.0;
-        tmp[0] = optarg[2];
-        tmp[1] = optarg[3];
-        green = (long double)strtol(tmp, NULL, 16) / 255.0;
-        tmp[0] = optarg[4];
-        tmp[1] = optarg[5];
-        blue = (long double)strtol(tmp, NULL, 16) / 255.0;
-        break;
-      case 'm':
-        maxiterations = atoll(optarg);
-        break;
-      case 'o':
-        out = (char *)reallocf(out, strlen(optarg)+1);
-        strcpy(out, optarg);
-        break;
-      case 'n':
-        workers = atoi(optarg);
-        break;
-      case 'e':
-        escape = atof(optarg);
-        break;
-      case 'd':
-        depth = atoi(optarg);
-        if (depth != 8 && depth != 16) {
-          fprintf(stderr, "Invalid bit depth %d\n", depth);
-          depth = 16;
-        }
-        break;
-      case 'k':
-        keepsratio = !keepsratio;
-        break;
-      case 'j':
-        colexp = atof(optarg);
-        break;
-      case 'p':
-        if (parama == LDBL_MIN) {
-          parama = atof(optarg);
-        } else {
-          paramb = atof(optarg);
-        }
-        break;
-      case 'g':
-        generator = (char *)malloc(strlen(optarg)+1);
-        strcpy(generator, optarg);
-        break;
+        tmp[0] = hex[0];
+        tmp[1] = hex[1];
+        color.s[0] = (long double)strtol(tmp, NULL, 16) / 255.0;
+        tmp[0] = hex[2];
+        tmp[1] = hex[3];
+        color.s[1] = (long double)strtol(tmp, NULL, 16) / 255.0;
+        tmp[0] = hex[4];
+        tmp[1] = hex[5];
+        color.s[2] = (long double)strtol(tmp, NULL, 16) / 255.0;
+        color.s[3] = 1.0;
+        } break;
       default:
-        fprintf(stderr, "Unknown option %c\n", ch);
-        return -1;
+        usage(argv[0]);
+        break;
+    };
+  }
+  if (kernname == NULL) {
+    std::cerr << "ERR: Need kernel name for cl program" << std::endl;
+    usage(argv[0]);
+  }
+  asprintf(&file, "%s.cl", kernname);
+
+  cl_platform_id platform_id;
+  cl_device_id *device_ids;
+  cl_uint device_id_count;
+  fetch_platform_device_ids(&platform_id, &device_id_count, &device_ids);
+  cl_context ctx = create_context(platform_id, device_id_count, device_ids);
+  cl_program program = create_program(ctx, file, device_id_count, device_ids);
+  cl_kernel kernel = create_kernel(ctx, program, kernname);
+  
+  cl_command_queue queue = create_command_queue(ctx, device_ids[device_id_count-1]);
+  
+  uint8_t *buffer = (uint8_t *)malloc(sizeof(uint8_t) * width * height * 4);
+  if (buffer == NULL) {
+    std::cerr << "Failed to allocate buffer!" << std::endl;
+    return 1;
+  }
+  cl_ulong deltacol = max_width;
+  cl_ulong deltarow = max_height;
+  while (row < height) {
+    cl_ulong newrow = row + deltarow;
+    if (newrow >= height) {
+      newrow = height;
     }
+    while (col < width) {
+      cl_ulong newcol = col + deltacol;
+      if (newcol >= width) {
+        newcol = width;
+      }
+      std::cout << "Rendering tile " << col << ", " << row << std::endl;
+      render_image(ctx, queue, kernel, buffer, col, row, newcol - col, newrow - row, width, height, coordinateframe, color);
+      col = newcol;
+    }
+    row = newrow;
+    col = 0;
   }
-  if (parama == LDBL_MIN) {
-    parama = paramb = 0.0f;
-  } else if (paramb == LDBL_MIN) {
-    paramb = 0.0f;
-  }
-  if (keepsratio) {
-    long double ratio = (long double)height / (long double)width, h = ratio * (right - left);
-    top = bottom + (top - bottom) / 2 + h / 2;
-    bottom = top - h;
-  }
-  
-  void *lib = dlopen(generator, RTLD_LAZY);
-  typedef std::complex<long double> (*iterator_creator)(std::complex<long double>, std::complex<long double>, uint64_t);
-  typedef fractal::color (*colorizer_creator)(fractal&, fractal::color, uint64_t, uint64_t, fractal::pixel_data, uint64_t *, uint64_t);
-  typedef void (*initialization_creator)(fractal&);
-  
-  iterator_creator (*iteratorsym)(long double, long double) = (iterator_creator (*)(long double, long double))dlsym(lib, "value_iterator");
-  colorizer_creator (*colorizersym)(long double, long double, long double, long double) = (colorizer_creator (*)(long double, long double, long double, long double))dlsym(lib, "colorizer");
-  initialization_creator (*initsym)(void) = (initialization_creator (*)(void))dlsym(lib, "init");
+  save_png(outfile, buffer, width, height);
+  free(buffer);
 
-  _colexp = colexp;
-  _param = std::complex<long double>(parama, paramb);
-  fractal *frac = new fractal(width, height, left, bottom, top, right, workers, maxiterations, escape);
-  frac->verbosity = verbosity;
-  frac->value_iterator = iteratorsym ? iteratorsym(parama, paramb) : default_iterator;
-  frac->colorizer = colorizersym ? colorizersym(colexp, red, green, blue) : default_colorizer;
-  if (initsym) {
-    initsym()(*frac);
-  } else {
-    _totalpix = (long double)( width * height );
-  }
-  if (verbosity >= 1) {
-    printf("Rendering...\n");
-  }
-  frac->render(false);
-  if (verbosity >= 1) {
-    printf("Rendering complete. Creating image\n");
-  }
-  frac->create_image(out, fractal::color{red, green, blue});
-
-  free(out);
-  dlclose(lib);
-  if (generator)
-    free(generator);
-  if (frac)
-    delete frac;
+  CL_ERR(clReleaseCommandQueue(queue));
+  CL_ERR(clReleaseKernel(kernel));
+  CL_ERR(clReleaseProgram(program));
+  CL_ERR(clReleaseContext(ctx));
+  free(device_ids);
+  free(file);
   return 0;
 }
 
