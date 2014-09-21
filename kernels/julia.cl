@@ -12,7 +12,7 @@ __kernel void julia(__write_only image2d_t output, __read_only ulong4 metadata, 
   dpos.x += (double)(metadata.x);
 
   double2 coord = {frame.x + coordsize.x * dpos.x / dimgsize.x, frame.z + coordsize.y * (dimgsize.y-dpos.y) / dimgsize.y};
-  double2 c = {-0.8, 0.156};
+  double2 c = {-0.4, 0.6};
 
   double2 val = coord;
   ulong i = 0;
