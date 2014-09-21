@@ -1,8 +1,4 @@
-*.fg
 fractalgen
-fracgif
 out.png
 *.o
 node_modules
-fuck
-tst.cc
