@@ -28,5 +28,5 @@ This uses cuda. If you want to run this you will need two things: a cuda capable
 # Samples
 
 Mandlebrot Set
-![Mandlebrot Set](mandlebrotsample.png)
+![Mandlebrot Set](examples/mandlebrot.png)
 
