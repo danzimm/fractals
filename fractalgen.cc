@@ -182,7 +182,7 @@ int main(int argc, char *const argv[]) {
         break;
     };
   }
-
+  
   dim3 threads_per_block(block_size, block_size, 1);
   dim3 remainders(dims.x % threads_per_block.x, dims.y % threads_per_block.y);
   dim3 blocks(dims.x / threads_per_block.x + (remainders.x == 0 ? 0 : 1), dims.y / threads_per_block.y + (remainders.y == 0 ? 0 : 1), 1);

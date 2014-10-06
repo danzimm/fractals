@@ -22,19 +22,6 @@ void genimage(uint8_t *pixels, size_t pitch, unsigned long width, unsigned long 
   if (real_location.x >= width || real_location.y >= height)
     return;
   
-  if (escape != 4.0) {
-    color[3] = 1.0;
-    color[0] = 1.0;
-    color[1] = 0.0;
-    color[2] = 0.0;
-  }
-
-  /*
-  unsigned long maxiter = 100;
-  float4 frame = {-2.0,2.0,-2.0,2.0};
-  double escape = 4.0;
-  */
-
   double pixel[4] = {color[0], color[1], color[2], color[3]};
 
   double2 coordsize = {frame.y - frame.x, frame.w - frame.z};
