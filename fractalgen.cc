@@ -52,23 +52,44 @@ CUresult errr = CUDA_SUCCESS;
 void usage(const char *progname) {
   std::cout << progname << ", version " << VERSION << ", made by DanZimm" << std::endl << std::endl;
   std::cout << "usage: " << progname << " [-m MAX_TILE_HEIGHT] [-w WIDTH] [-h HEIGHT] [-o OUTFILE] [-z]" << std::endl;
-  std::cout << "                   [-l LEFT] [-r RIGHT] [-b BOTTOM] [-t TOP]" << std::endl << std::endl;
-  std::cout << "This program take in an OpenCL program which has a kernel that takes a 2d image for writing, a ulong4 of metadata and a coordinateframe" << std::endl;
-  std::cout << "where the metadata is of the form {offsetx, offsety, width, height} where offsetx/y is the offset of the tile currently being rendered" << std::endl;
-  std::cout << "(i.e. the pixel coordinate of the tile being rendered) and width/height are the total width/height of the entire image." << std::endl;
-  std::cout << "This was originally created in order to generate fractals but can be used to generate any image that needs to be big." << std::endl << std::endl;
-  std::cout << "  -m : Specifies the height a tile rendered can be. Defaults to 10" << std::endl;
-  std::cout << "  -w : Specifies the width of the image to generate" << std::endl;
-  std::cout << "  -h : Specifies the height of the image to generate" << std::endl;
-  std::cout << "  -o : Specifies the name of the output png" << std::endl;
-  std::cout << "  -z : Shows this help and exits" << std::endl;
-  std::cout << "  -c : Specify the color in hex for the fractal" << std::endl;
-  std::cout << "  -l : The left most `x' that will be rendered" << std::endl;
-  std::cout << "  -r : The right most `x' that will be rendered" << std::endl;
-  std::cout << "  -t : The top most `y' that will be rendered" << std::endl;
-  std::cout << "  -b : The bottom most `y' that will be rendered" << std::endl;
-  std::cout << "    The last 4 parameters set up the coordinate system for the image to be rendered." << std::endl;
-// #error Add flags to usage for the ptx inputs
+  std::cout << "                   [-l LEFT] [-r RIGHT] [-b BOTTOM] [-t TOP] [-c COLOR] [-n MAXITER]" << std::endl;
+  std::cout << "                   [-e ESCAPE] [-p FRACTAL_PTX] [-q COLORIZER_PTX] [-s BASE_PTX]" << std::endl;
+  std::cout << "                   [-u EXTRA_PTX]... [-k]" << std::endl << std::endl;
+  std::cout << " -m : Specifies the height a tile rendered can be. Defaults to 10" << std::endl;
+  std::cout << " -w : Specifies the width of the image to generate. Defaults to 1000" << std::endl;
+  std::cout << " -h : Specifies the height of the image to generate. Defaults to 1000" << std::endl;
+  std::cout << " -o : Specifies the name of the output png. Defaults to out.png" << std::endl;
+  std::cout << " -z : Shows this help and exits" << std::endl;
+  std::cout << " -c : Specify the color in hex for the fractal e.g. A9E062. Defaults to FFFFFF" << std::endl;
+  std::cout << " -l : The left most `x' that will be rendered. Defaults to -2.0" << std::endl;
+  std::cout << " -r : The right most `x' that will be rendered. Defaults to 2.0" << std::endl;
+  std::cout << " -t : The top most `y' that will be rendered. Defaults to 2.0" << std::endl;
+  std::cout << " -b : The bottom most `y' that will be rendered. Defaults to -2.0" << std::endl;
+  std::cout << "      The last 4 parameters set up the coordinate system for the " << std::endl;
+  std::cout << "      image to be rendered" << std::endl;
+  std::cout << " -n : The maximum number of iterations to check if the sequence diverges." << std::endl;
+  std::cout << "      Defaults to 100" << std::endl;
+  std::cout << " -e : The escape value to test the magnitude of the current iteration against." << std::endl;
+  std::cout << "      If the magnitude squared is greater than or equal to the number supplied" << std::endl;
+  std::cout << "      then the loop breaks (this is unlike the usual escape value which checks" << std::endl;
+  std::cout << "      directly against the magnitude. Defaults to 4.0" << std::endl;
+  std::cout << " -p : The name of the PTX file containing the function `processPixel` which contains" << std::endl;
+  std::cout << "      the actual algorithm for the given fractal. See below for more details." << std::endl;
+  std::cout << "      Defaults to mandlebrot.ptx" << std::endl;
+  std::cout << " -q : The name of the PTX file containing the `colorizePixel` function. See below" << std::endl;
+  std::cout << "      for more details. Defaults to an internal file called `default_colorizer.ptx" << std::endl;
+  std::cout << " -s : The name of the PTX file containing the kernel `genimage`. See below for more" << std::endl;
+  std::cout << "      details. Defaults to an internal file called base_ptx.ptx" << std::endl;
+  std::cout << " -u : The name of an extra PTX file. You may supply this argument up to 16 times." << std::endl;
+  std::cout << "      These will be loaded when compiling the full kernel. Defaults to no extra files" << std::endl;
+  std::cout << " -k : Specifies to keep the ratio of the coordinate system with respect to the" << std::endl;
+  std::cout << "      specified width and height. Automatically resizes the height, keeping its" << std::endl;
+  std::cout << "      original center. Defaults to being off" << std::endl;
+
+  std::cout << std::endl;
+  std::cout << "How to generate a fractal" << std::endl;
+  std::cout << "-------------------------" << std::endl;
+  std::cout << "In order to generate a fractal you really need to algorithms; one to specify the sequence that characterizes the fractal and another to specify how to color each pixel in accordance to the sequence. I (DanZimm) will be posting a small write up about this soon after I write this help page. Anyways, the sequence algorithm should be placed in a file that has a function with the following signiture: `void processPixel(unsigned long *ii, double *magg, unsigned long maxiter, double escape, double2 coord)`. The parameter `ii` is where you place the output number of iterations it took for the sequence to diverge. The `magg` parameter is where you should place the output magnitude squared (meaning the square magnitude of the last iteration of the sequence). The `maxiter` parameter specifies the maximum number of iterations that you should check to see if your sequence has diverged. `escape` specifies the maximum square of the magnitude that is allowed at each iteration until you should consider the sequence as divergent. Finally `coord` is the current coordinate of the pixel that is being rendered. This is in the actual fractal coordinates, not in the pixel coordinates (i.e. the top left would be (left, top) instead of (0,0) where left is the number supplied to the `-l` flag and top is the number supplied to the `-t` flag). Check out the source of mandlebrot.ptx (meaning the file mandlebrot.cu) to see an example of how this function should work. The colorizer PTX usually won't be specified since I worked pretty hard to get the default one to look nice, however if you want to create your own simply follow the file `default_colorizer.cu` in the intermediates directory of the source code. Long story short is that you are given a `double[4]` array that represents the rgba of a pixel and you're supposed to modify it according to the number of iterations the current pixel took and its final magnitude. The inital value of the pixel is the color specified with `-c`. The base PTX file contains the actual kernel. As of now `fractalgen` uses an internal one that has a lot of boilerplate code. Again if you want to write your own kernel feel free, simply follow the template `base_ptx.cu` in the intermediates directory of the source code. Finally the extra PTX allow you to separate out different PTXs from each other, hopefully allowing `fractalgen` to be more modular. At this point I don't currently use it but will in the future." << std::endl;
   exit(0);
 }
 
@@ -97,6 +118,7 @@ int main(int argc, char *const argv[]) {
   metadata *h_meta = NULL;
   CUdeviceptr meta;
   size_t i;
+  bool keeps_ratio = false;
   
   unsigned long maxiter = 100;
   float frame[4] = {-2.0, 2.0, -2.0, 2.0};
@@ -104,7 +126,7 @@ int main(int argc, char *const argv[]) {
   double color[4] = {1.0, 1.0, 1.0, 1.0};
   
   int ch;
-  while ((ch = getopt(argc, argv, "m:w:h:o:zl:r:t:b:c:n:e:p:q:u:s:")) != -1) {
+  while ((ch = getopt(argc, argv, "m:w:h:o:zl:r:t:b:c:n:e:p:q:u:s:k")) != -1) {
     switch (ch) {
       case 'm':
         grid_height = (unsigned long)atol(optarg);
@@ -177,12 +199,23 @@ int main(int argc, char *const argv[]) {
       case 's':
         base_ptx_name = optarg;
         break;
+      case 'k':
+        keeps_ratio = true;
+        break;
       default:
         usage(argv[0]);
         break;
     };
   }
   
+  if (keeps_ratio) {
+    double coordwidth = frame[1] - frame[0];
+    double coordheight = coordwidth * ((double)dims.y / (double)dims.x);
+    double yoff = (frame[3] + frame[2]) / 2.0;
+    frame[2] = yoff - (coordheight / 2);
+    frame[3] = yoff + (coordheight / 2);
+  }
+
   dim3 threads_per_block(block_size, block_size, 1);
   dim3 remainders(dims.x % threads_per_block.x, dims.y % threads_per_block.y);
   dim3 blocks(dims.x / threads_per_block.x + (remainders.x == 0 ? 0 : 1), dims.y / threads_per_block.y + (remainders.y == 0 ? 0 : 1), 1);

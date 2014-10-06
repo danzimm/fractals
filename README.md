@@ -1,28 +1,29 @@
 # Fractals
 
-Thanks to [@SquiffyPwn](https://twitter.com/squiffypwn) I decided to create some fractals. Since I'm me I decided to make it a small fractal creation library / tool. So here is the result - a cpp library along with a cli tool which takes plugins to create custom fractals.
+Thanks to [@SquiffyPwn](https://twitter.com/squiffypwn) I decided to create some fractals. Since I'm me I decided to make it a small fractal creation library / tool. So here is the result - ~~a cpp library~~ along with a cli tool which takes plugins to create custom fractals (the library no longer exists, I will eventually rip it out of the cli tool but as of now it doesn't exist).
 
 # Docs
 
 Check out the source of `fractalgen` to see how the program works, use `-z` to see the help. TL;DR:
-> Specify `-k KERNEL` to specify the name of the opencl kernel to use. The program will look for `KERNEL.cl` and the kernel `KERNEL` inside that file to run the program with.
+> Specify `-p SUBKERNEL.ptx` to specify the name of the cuda file to use that has a `processPixel` function in it.
 
 # TODO
 
 - Create proper docs
   - Modify above to be more in depth
   - Create manpage
-  - Create proper `-h` flag instead of `-z`
+  - Proper docs on how to create these `ptx` files
 - Add code to save as other formats
   - Add code to allow this to output a CoreGraphics bitmap
 - Add node backend to communicate to this library
 - Add website frontend
-- Linux compatibility (maybe windows...)
+- Linux compatibility - mostly done
 - Make this more modular so you don't have to have so much boilerplate code
+- Add more boilerplate code to the `base_ptx.cu` file (i.e. add in the while loop and the such)
 
 # Some Notes
 
-This uses opencl. At the moment it simply creates a png by tiling the image you want to create and rendering the tiles one at a time. Some weird errors occur if you specify too large a tile size (it seems like some sort of watchdog on the GPU kicks in and kills the kernel that's running - no idea how to fix this).
+This uses cuda. If you want to run this you will need two things: a cuda capable graphics card (I'm unsure at the moment which APIs I rely on but it works on my GEForce GT 650M so the requirements can't be too steep) and the cuda development kit installed. Fortunately for mac this means just installing the PKG from their website, otherwise on linux you'll need to turn off your window server (afaik) in order to properly install all the cuda components (this includes a graphics driver, that's why the window server needs to be turned off).
 
 # Samples
 
