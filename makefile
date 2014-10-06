@@ -10,7 +10,7 @@ fractalgen_LDFLAGS=-lpng -L$(CUDA_LIB) -lcuda
 
 .SUFFIXES:
 
-all: fractalgen
+all: fractalgen kernels
 
 clean:
 	rm -rf *.o
@@ -25,7 +25,7 @@ fractalgen: fractalgen.cc.o
 include/ptx.h: intermediates/hdrgen.js intermediates/base_ptx.ptx intermediates/default_colorizer.ptx
 	cd intermediates && node hdrgen.js ../include/
 
-kernels: kernels/mandlebrot.ptx
+kernels: kernels/cube.ptx kernels/julia.ptx kernels/mandlebrot.ptx kernels/valtologval.ptx kernels/valtoval.ptx kernels/zimm.ptx
 
 %.ptx: %.cu
 	$(NVCC) -ptx $< -o $@ $(CFLAGS)

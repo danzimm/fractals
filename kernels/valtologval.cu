@@ -11,7 +11,7 @@ void processPixel(unsigned long *ii, double *magg, unsigned long maxiter, double
   double mag = 0.0f;
   unsigned long i = 0;
   while (i < maxiter) {
-    val = complex_pown(val, 2);
+    val = complex_pow(val, complex_ln(val)) + coord;
     mag = complex_mag2(val);
     if (mag >= escape) {
       break;
