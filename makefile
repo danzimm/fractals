@@ -1,20 +1,41 @@
 
-CXX=clang++
-CFLAGS=-Wall -Werror -std=c++1y -O3
-fractalgen_LDFLAGS=-lpng -framework OpenCL
+CUDA_LIB=/usr/local/cuda/lib
 
-.PHONY: all clean
+NVCC=nvcc
+CXX=clang++
+CFLAGS=--compiler-options -Wall --compiler-options -Werror -DVERSION=0.1 --compiler-options -O3 --compiler-options -Iinclude/
+fractalgen_LDFLAGS=-lpng -L$(CUDA_LIB) -lcuda
+
+.PHONY: all clean kernels
+
+.SUFFIXES:
 
 all: fractalgen
 
 clean:
 	rm -rf *.o
 	rm -rf fractalgen
+	rm -rf intermediates/*.ptx
+	rm -rf kernels/*.ptx
+	rm -rf include/ptx.h
 
 fractalgen: fractalgen.cc.o
-	$(CXX) $(filter %.o,$^) -o $@ $(fractalgen_LDFLAGS)
+	$(NVCC) $(filter %.o,$^) -o $@ $(fractalgen_LDFLAGS)
+
+include/ptx.h: intermediates/hdrgen.js intermediates/base_ptx.ptx intermediates/default_colorizer.ptx
+	cd intermediates && node hdrgen.js ../include/
+
+kernels: kernels/mandlebrot.ptx
+
+%.ptx: %.cu
+	$(NVCC) -ptx $< -o $@ $(CFLAGS)
+
+fractalgen.cc.o: fractalgen.cc include/ptx.h
+	$(NVCC) -c $< -o $@ $(CFLAGS)
+
+%.cu.o: %.cu
+	$(NVCC) -c $< -o $@ $(CFLAGS)
 
 %.cc.o: %.cc
 	$(CXX) -c $< -o $@ $(CFLAGS)
-
 
