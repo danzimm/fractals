@@ -8,6 +8,7 @@
 #include "helpers.h"
 #include "ptx.h"
 #include "common.h"
+#include "hacks.h"
 
 void save_png(const char *filename, uint8_t *buffer, unsigned long width, unsigned long height) {
   png_structp png_ptr = png_create_write_struct(PNG_LIBPNG_VER_STRING, NULL, NULL, NULL);
@@ -93,11 +94,13 @@ void usage(const char *progname) {
   exit(0);
 }
 
+#define DEFAULT_FRACTAL_PTX_NAME Z_STRINGIFY(DEFAULT_FRACTAL_NAME)
+
 int main(int argc, char *const argv[]) {
   
   const char *outfile = "out.png";
   const char *base_ptx_name = NULL;
-  const char *fractal_ptx_name = "mandlebrot.ptx";
+  const char *fractal_ptx_name = DEFAULT_FRACTAL_PTX_NAME;
   const char *colorizer_ptx_name = NULL;
   unsigned char nother = 0;
   const char *other_ptx_names[16];
@@ -207,6 +210,10 @@ int main(int argc, char *const argv[]) {
         break;
     };
   }
+
+  if (!fractal_ptx_name) {
+    usage(argv[0]);
+  }
   
   if (keeps_ratio) {
     double coordwidth = frame[1] - frame[0];
@@ -226,23 +233,53 @@ int main(int argc, char *const argv[]) {
   dev_id = fetch_best_device();
   CU_ERR(cuDeviceGet(&dev, dev_id));
   CU_ERR(cuCtxCreate(&ctx, 0, dev));
-  CU_ERR(cuLinkCreate(0, NULL, NULL, &linkState));
+
+#define LOG_SIZE 4096
+
+#define CU_LINK_ERR(e) \
+  if ((errr = e) != CUDA_SUCCESS) { \
+    const char *errstr; \
+    cuGetErrorString(errr, &errstr); \
+    fprintf(stderr, "CUDA link err at `%s' %d: %s\n", #e, errr, errstr); \
+    fprintf(stderr, "Info log:\n%s\n", linker_info_log); \
+    fprintf(stderr, "Error log:\n%s\n", linker_error_log); \
+    exit(-1); \
+  } \
+
+  char linker_info_log[LOG_SIZE];
+  char linker_error_log[LOG_SIZE];
+
+  CUjit_option options[] = {
+    CU_JIT_LOG_VERBOSE,
+    CU_JIT_INFO_LOG_BUFFER_SIZE_BYTES,
+    CU_JIT_INFO_LOG_BUFFER,
+    CU_JIT_ERROR_LOG_BUFFER_SIZE_BYTES,
+    CU_JIT_ERROR_LOG_BUFFER
+  };
+  void *option_vals[] = {
+    (void *)true,
+    (void *)sizeof(linker_info_log),
+    (void *)linker_info_log,
+    (void *)sizeof(linker_error_log),
+    (void *)linker_error_log
+  };
+  CU_LINK_ERR(cuLinkCreate(sizeof(options)/sizeof(options[0]), (CUjit_option *)options, (void **)option_vals, &linkState));
   if (base_ptx_name) {
-    CU_ERR(cuLinkAddFile(linkState, CU_JIT_INPUT_PTX, base_ptx_name, 0, NULL, NULL));
+    CU_LINK_ERR(cuLinkAddFile(linkState, CU_JIT_INPUT_PTX, base_ptx_name, 0, NULL, NULL));
   } else {
-    CU_ERR(cuLinkAddData(linkState, CU_JIT_INPUT_PTX, (void*)base_ptx, sizeof(base_ptx), "base_ptx", 0, NULL, NULL));
+    CU_LINK_ERR(cuLinkAddData(linkState, CU_JIT_INPUT_PTX, (void*)escape_base, sizeof(escape_base), "escape_base", 0, NULL, NULL));
   }
   if (colorizer_ptx_name) {
-    CU_ERR(cuLinkAddFile(linkState, CU_JIT_INPUT_PTX, colorizer_ptx_name, 0, NULL, NULL));
+    CU_LINK_ERR(cuLinkAddFile(linkState, CU_JIT_INPUT_PTX, colorizer_ptx_name, 0, NULL, NULL));
   } else {
-    CU_ERR(cuLinkAddData(linkState, CU_JIT_INPUT_PTX, (void*)default_colorizer, sizeof(default_colorizer), "default_colorizer", 0, NULL, NULL));
+    CU_LINK_ERR(cuLinkAddData(linkState, CU_JIT_INPUT_PTX, (void*)escape_colorizer, sizeof(escape_colorizer), "escape_colorizer", 0, NULL, NULL));
   }
-  CU_ERR(cuLinkAddFile(linkState, CU_JIT_INPUT_PTX, fractal_ptx_name, 0, NULL, NULL));
+  CU_LINK_ERR(cuLinkAddFile(linkState, CU_JIT_INPUT_PTX, fractal_ptx_name, 0, NULL, NULL));
   for (i = 0; i < nother; i++) {
-    CU_ERR(cuLinkAddFile(linkState, CU_JIT_INPUT_PTX, other_ptx_names[i], 0, NULL, NULL));
+    CU_LINK_ERR(cuLinkAddFile(linkState, CU_JIT_INPUT_PTX, other_ptx_names[i], 0, NULL, NULL));
   }
-  CU_ERR(cuLinkComplete(linkState, &out_cubin, &out_len));
-  CU_ERR(cuLinkDestroy(linkState));
+  CU_LINK_ERR(cuLinkComplete(linkState, &out_cubin, &out_len));
+  CU_LINK_ERR(cuLinkDestroy(linkState));
   CU_ERR(cuModuleLoadData(&module, out_cubin));
   CU_ERR(cuModuleGetFunction(&func, module, "genimage"));
   /*

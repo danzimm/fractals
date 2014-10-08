@@ -2,7 +2,7 @@
 extern "C" {
 
 __device__
-void colorizePixel(double pixel[4], double mag, double escape, double i, double maxiter) {
+void colorize_pixel(double pixel[4], double mag, double escape, double i, double maxiter, double2 val, double2 coord) {
 
   double darkener;
   if (i < maxiter) {

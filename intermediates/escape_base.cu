@@ -1,14 +1,15 @@
 
 #include <stdint.h>
 #include "common.h"
+#include "complex.cu"
 
 extern "C" {
 
 __device__
-void processPixel(unsigned long *ii, double *magg, unsigned long maxiter, double escape, double2 coord);
+double2 iterate_value(unsigned long i, double mag, double2 val, double2 coord);
 
 __device__
-void colorizePixel(double pixel[4], double mag, double escape, double i, double maxiter);
+void colorize_pixel(double pixel[4], double mag, double escape, double i, double maxiter, double2 val, double2 coord);
 
 __global__
 void genimage(uint8_t *pixels, size_t pitch, unsigned long width, unsigned long height, unsigned long yoffset, metadata *meta) {
@@ -29,12 +30,18 @@ void genimage(uint8_t *pixels, size_t pitch, unsigned long width, unsigned long 
   double2 dimgsize = {(double)width, (double)height};
   double2 dpos = {(double)real_location.x, (double)real_location.y};
 
-  double2 coord = {frame.x + coordsize.x * dpos.x / dimgsize.x, frame.z + coordsize.y * (dimgsize.y-dpos.y) / dimgsize.y};
+  double2 coord = {frame.x + coordsize.x * dpos.x / dimgsize.x, frame.z + coordsize.y * (dimgsize.y-dpos.y) / dimgsize.y}, val = coord;
   unsigned long i = 0;
   double mag = 0.0;
-  processPixel(&i, &mag, maxiter, escape, coord);
-  
-  colorizePixel(pixel, mag, escape, i, maxiter);
+  while (i < maxiter) {
+    val = iterate_value(i, mag, val, coord);
+    mag = complex_mag2(val);
+    if (mag >= escape) {
+      break;
+    }
+    i++;
+  }
+  colorize_pixel(pixel, mag, escape, i, maxiter, val, coord);
 
   uint8_t *row = (uint8_t *)((char *)pixels + (real_location.y - yoffset) * pitch);
   row[real_location.x * 4 + 0] = (uint8_t)(pixel[0] * 255.0);
