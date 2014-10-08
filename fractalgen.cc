@@ -8,7 +8,6 @@
 #include "helpers.h"
 #include "ptx.h"
 #include "common.h"
-#include "hacks.h"
 
 void save_png(const char *filename, uint8_t *buffer, unsigned long width, unsigned long height) {
   png_structp png_ptr = png_create_write_struct(PNG_LIBPNG_VER_STRING, NULL, NULL, NULL);
@@ -94,7 +93,27 @@ void usage(const char *progname) {
   exit(0);
 }
 
-#define DEFAULT_FRACTAL_PTX_NAME Z_STRINGIFY(DEFAULT_FRACTAL_NAME)
+// clang doesn't let me pass in a string as a macro :(
+#define DEFAULT_FRACTAL_PTX_NAME "kernels/zimm.ptx"
+
+int pown(int a, unsigned n) {
+  return n == 0 ? 1 : a * pown(a, n-1);
+}
+
+bool is_number(const char *str, unsigned *out) {
+  unsigned val = 0;
+  size_t len = strlen(str), i;
+  for (i = len-1; i != (size_t)-1; i--) {
+    if (str[i] >= '0' && str[i] <= '9') {
+      val += (str[i] - '0') * pown(10, i);
+    } else {
+      return false;
+    }
+  }
+  if (out)
+    *out = val;
+  return true;
+}
 
 int main(int argc, char *const argv[]) {
   
@@ -102,6 +121,7 @@ int main(int argc, char *const argv[]) {
   const char *base_ptx_name = NULL;
   const char *fractal_ptx_name = DEFAULT_FRACTAL_PTX_NAME;
   const char *colorizer_ptx_name = NULL;
+  unsigned fractal_type = 0;
   unsigned char nother = 0;
   const char *other_ptx_names[16];
   CUmodule module;
@@ -190,7 +210,9 @@ int main(int argc, char *const argv[]) {
         fractal_ptx_name = optarg;
         break;
       case 'q':
-        colorizer_ptx_name = optarg;
+        if (!is_number(optarg, &fractal_type)) {
+          colorizer_ptx_name = optarg;
+        }
         break;
       case 'u':
         if (nother == 15) {
@@ -200,7 +222,9 @@ int main(int argc, char *const argv[]) {
         other_ptx_names[++nother] = optarg;
         break;
       case 's':
-        base_ptx_name = optarg;
+        if (!is_number(optarg, &fractal_type)) {
+          base_ptx_name = optarg;
+        }
         break;
       case 'k':
         keeps_ratio = true;
@@ -212,6 +236,10 @@ int main(int argc, char *const argv[]) {
   }
 
   if (!fractal_ptx_name) {
+    usage(argv[0]);
+  }
+  if (fractal_type >= number_fractal_types && (base_ptx_name == NULL || colorizer_ptx_name == NULL)) {
+    fprintf(stderr, "Invalid fractal type: %d (we only have %d fractal types)\n", fractal_type, number_fractal_types);
     usage(argv[0]);
   }
   
@@ -267,12 +295,12 @@ int main(int argc, char *const argv[]) {
   if (base_ptx_name) {
     CU_LINK_ERR(cuLinkAddFile(linkState, CU_JIT_INPUT_PTX, base_ptx_name, 0, NULL, NULL));
   } else {
-    CU_LINK_ERR(cuLinkAddData(linkState, CU_JIT_INPUT_PTX, (void*)escape_base, sizeof(escape_base), "escape_base", 0, NULL, NULL));
+    CU_LINK_ERR(cuLinkAddData(linkState, CU_JIT_INPUT_PTX, (void*)base_ptxs[fractal_type], strlen(base_ptxs[fractal_type]) + 1, "base_ptx" , 0, NULL, NULL));
   }
   if (colorizer_ptx_name) {
     CU_LINK_ERR(cuLinkAddFile(linkState, CU_JIT_INPUT_PTX, colorizer_ptx_name, 0, NULL, NULL));
   } else {
-    CU_LINK_ERR(cuLinkAddData(linkState, CU_JIT_INPUT_PTX, (void*)escape_colorizer, sizeof(escape_colorizer), "escape_colorizer", 0, NULL, NULL));
+    CU_LINK_ERR(cuLinkAddData(linkState, CU_JIT_INPUT_PTX, (void*)colorizer_ptxs[fractal_type], strlen(colorizer_ptxs[fractal_type]) + 1, "colorizer_ptx", 0, NULL, NULL));
   }
   CU_LINK_ERR(cuLinkAddFile(linkState, CU_JIT_INPUT_PTX, fractal_ptx_name, 0, NULL, NULL));
   for (i = 0; i < nother; i++) {

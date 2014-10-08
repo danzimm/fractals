@@ -10,6 +10,7 @@ Check out the source of `fractalgen` to see how the program works, use `-z` to s
 # TODO
 
 - Create proper docs
+  - Fix docs in `-z` command
   - Modify above to be more in depth
   - Create manpage
   - Proper docs on how to create these `ptx` files
@@ -17,9 +18,7 @@ Check out the source of `fractalgen` to see how the program works, use `-z` to s
   - Add code to allow this to output a CoreGraphics bitmap
 - Add node backend to communicate to this library
 - Add website frontend
-- Linux compatibility - mostly done
-- Make this more modular so you don't have to have so much boilerplate code
-- Add more boilerplate code to the `base_ptx.cu` file (i.e. add in the while loop and the such)
+- Add ability for modules to define their own defaults 
 
 # Some Notes
 
