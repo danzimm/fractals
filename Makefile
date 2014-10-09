@@ -28,7 +28,7 @@ fractalgen: fractalgen.cc.o
 include/ptx.h: intermediates/hdrgen.js intermediates/escape_base.ptx intermediates/escape_colorizer.ptx
 	cd intermediates && node hdrgen.js ../include/
 
-kernels: kernels/cube.ptx kernels/julia.ptx kernels/mandlebrot.ptx kernels/valtologval.ptx kernels/valtoval.ptx kernels/zimm.ptx
+kernels: kernels/cube.ptx kernels/julia.ptx kernels/mandlebrot.ptx kernels/valtologval.ptx kernels/valtoval.ptx kernels/zimm.ptx kernels/migue.ptx
 
 %.ptx: %.cu
 	$(NVCC) -ptx $< -o $@ $(CFLAGS)
