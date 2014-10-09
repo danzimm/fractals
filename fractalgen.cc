@@ -427,7 +427,7 @@ int main(int argc, char *const argv[]) {
       for (i = 0; i < maxiter * nstartpoints; i++) {
         colored_point pnt = points[i];
         double pixel_size[2] = {(frame[1] - frame[0]) / (double)dims.x, (frame[3] - frame[2]) / (double)dims.y};
-        unsigned long loc[2] = {(unsigned long)(floor((pnt.coord[0] - frame[0]) / pixel_size[0])), (unsigned long)(floor((pnt.coord[1] - frame[2]) / pixel_size[1]))};
+        unsigned long loc[2] = {(unsigned long)(floor((pnt.coord[0] - frame[0]) / pixel_size[0])), dims.y - (unsigned long)(floor((pnt.coord[1] - frame[2]) / pixel_size[1]))};
         if (loc[0] >= dims.x || loc[1] >= dims.y) {
           //std::cout << "Bad pixel found: " << loc[0] << ", " << loc[1] << " from coords: " << pnt.coord[0] << ", " << pnt.coord[1] << std::endl;
           badp++;
@@ -438,7 +438,7 @@ int main(int argc, char *const argv[]) {
         h_pixels[loc[1] * dims.x * 4 + loc[0] * 4 + 2] = pnt.color[2];
         h_pixels[loc[1] * dims.x * 4 + loc[0] * 4 + 3] = pnt.color[3];
       }
-      std::cout << "Got " << badp << " / " << maxiter * nstartpoints << " bad points (" << (double)badp / (double)maxiter << ")" << std::endl;
+      //std::cout << "Got " << badp << " / " << maxiter * nstartpoints << " bad points (" << (double)badp / (double)maxiter << ")" << std::endl;
       free(points);
     } break;
   }
