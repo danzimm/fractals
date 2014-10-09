@@ -25,10 +25,10 @@ r: clean all
 fractalgen: fractalgen.cc.o
 	$(NVCC) $(filter %.o,$^) -o $@ $(fractalgen_LDFLAGS)
 
-include/ptx.h: intermediates/hdrgen.js intermediates/escape_base.ptx intermediates/escape_colorizer.ptx
+include/ptx.h: intermediates/hdrgen.js intermediates/escape_base.ptx intermediates/escape_colorizer.ptx intermediates/cgame_base.ptx intermediates/cgame_colorizer.ptx
 	cd intermediates && node hdrgen.js ../include/
 
-kernels: kernels/cube.ptx kernels/julia.ptx kernels/mandlebrot.ptx kernels/valtologval.ptx kernels/valtoval.ptx kernels/zimm.ptx kernels/migue.ptx
+kernels: kernels/cube.ptx kernels/julia.ptx kernels/mandlebrot.ptx kernels/valtologval.ptx kernels/valtoval.ptx kernels/zimm.ptx kernels/migue.ptx kernels/sierpinski.ptx
 
 %.ptx: %.cu
 	$(NVCC) -ptx $< -o $@ $(CFLAGS)

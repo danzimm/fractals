@@ -4,6 +4,7 @@
 #include <png.h>
 #include <iostream>
 #include <cuda_runtime.h>
+#include <curand_kernel.h>
 
 #include "helpers.h"
 #include "ptx.h"
@@ -133,15 +134,15 @@ int main(int argc, char *const argv[]) {
   size_t out_len = 0;
   int dev_id = 0;
   ulong2 dims = {1000, 1000};
-  unsigned long grid_height = 10;
+  unsigned long grid_height = 10, nstartpoints;
   unsigned long block_size = 32, current_row = 0;
   size_t pitch;
   uint8_t *h_pixels = NULL;
-  CUdeviceptr pixels;
+  CUdeviceptr pixels, meta, rng_states;
   metadata *h_meta = NULL;
-  CUdeviceptr meta;
   size_t i;
   bool keeps_ratio = false;
+  unsigned long long seed = 0;
   
   unsigned long maxiter = 100;
   float frame[4] = {-2.0, 2.0, -2.0, 2.0};
@@ -251,9 +252,22 @@ int main(int argc, char *const argv[]) {
     frame[3] = yoff + (coordheight / 2);
   }
 
-  dim3 threads_per_block(block_size, block_size, 1);
-  dim3 remainders(dims.x % threads_per_block.x, dims.y % threads_per_block.y);
-  dim3 blocks(dims.x / threads_per_block.x + (remainders.x == 0 ? 0 : 1), dims.y / threads_per_block.y + (remainders.y == 0 ? 0 : 1), 1);
+  dim3 threads_per_block;
+  dim3 blocks;
+  
+  switch(fractal_type) {
+    case 0: {
+        threads_per_block = dim3(block_size, block_size, 1);
+        dim3 remainders(dims.x % threads_per_block.x, dims.y % threads_per_block.y);
+        blocks = dim3(dims.x / threads_per_block.x + (remainders.x == 0 ? 0 : 1), dims.y / threads_per_block.y + (remainders.y == 0 ? 0 : 1), 1);
+      } break;
+    case 1:
+      nstartpoints = grid_height;
+      block_size = nstartpoints;
+      threads_per_block = dim3(block_size, 1, 1);
+      blocks = dim3(1, 1, 1);
+      break;
+  };
 
   CU_ERR(cuInit(0));
   std::cout << "Compiling kernel" << std::endl;
@@ -309,7 +323,6 @@ int main(int argc, char *const argv[]) {
   CU_LINK_ERR(cuLinkComplete(linkState, &out_cubin, &out_len));
   CU_LINK_ERR(cuLinkDestroy(linkState));
   CU_ERR(cuModuleLoadData(&module, out_cubin));
-  CU_ERR(cuModuleGetFunction(&func, module, "genimage"));
   /*
   char name[100];
   cuDeviceGetName(name, 100, cuDevice);
@@ -317,9 +330,19 @@ int main(int argc, char *const argv[]) {
   */
   
   h_pixels = (uint8_t *)malloc(dims.x * 4 * sizeof(uint8_t) * dims.y);
-  memset(h_pixels, 0, dims.x * 4 * sizeof(uint8_t) * dims.y);
+  size_t j;
+  for (j = 0; j < dims.y; j++) {
+    for (i = 0; i < dims.x; i++) {
+      h_pixels[j * dims.x * 4 + 4 * i + 0] = 0;
+      h_pixels[j * dims.x * 4 + 4 * i + 1] = 0;
+      h_pixels[j * dims.x * 4 + 4 * i + 2] = 0;
+      h_pixels[j * dims.x * 4 + 4 * i + 3] = 255;
+    }
+  }
+
   h_meta = (metadata *)malloc(sizeof(metadata));
   h_meta->maxiter = maxiter;
+  h_meta->first_run = true;
   for (i = 0; i < 4; i++) {
     h_meta->frame[i] = frame[i];
   }
@@ -331,39 +354,94 @@ int main(int argc, char *const argv[]) {
   CU_ERR(cuMemcpyHtoD(meta, h_meta, sizeof(metadata)));
 
   std::cout << "Rendering..." << std::endl;
-
-  while (current_row < dims.y) {
-    pitch = 0;
-    pixels = 0;
-
-    if (current_row + grid_height < dims.y) {
-      blocks.y = grid_height;
-    } else {
-      blocks.y = dims.y - current_row;
-    }
-    CU_ERR(cuMemAllocPitch(&pixels, &pitch, dims.x * 4 * sizeof(uint8_t), blocks.y * threads_per_block.y, 4));
-    void *args[] = {&pixels, &pitch, &dims.x, &dims.y, &current_row, &meta};
-    CU_ERR(cuLaunchKernel(func, blocks.x, blocks.y, blocks.z, threads_per_block.x, threads_per_block.y, threads_per_block.z, 0, NULL, args, NULL));
-
-    CUDA_MEMCPY2D p;
-    p.srcXInBytes = p.srcY = 0;
-    p.srcMemoryType = CU_MEMORYTYPE_DEVICE;
-    p.srcDevice = pixels;
-    p.srcPitch = pitch;
-    p.dstXInBytes = 0;
-    p.dstY = current_row;
-    p.dstMemoryType = CU_MEMORYTYPE_HOST;
-    p.dstHost = h_pixels;
-    p.dstPitch = dims.x * 4 * sizeof(uint8_t);
-    p.WidthInBytes = dims.x * 4 * sizeof(uint8_t);
-    p.Height = blocks.y;
-
-    CU_ERR(cuMemcpy2D(&p));
-    CU_ERR(cuMemFree(pixels));
-
-    current_row += grid_height;
-  }
   
+  switch (fractal_type) {
+    case 0: {
+      CU_ERR(cuModuleGetFunction(&func, module, "genimage"));
+      while (current_row < dims.y) {
+        pitch = 0;
+        pixels = 0;
+        
+        if (current_row + grid_height < dims.y) {
+          blocks.y = grid_height;
+        } else {
+          blocks.y = dims.y - current_row;
+        }
+        CU_ERR(cuMemAllocPitch(&pixels, &pitch, dims.x * 4 * sizeof(uint8_t), blocks.y * threads_per_block.y, 4));
+        void *args[] = {&pixels, &pitch, &dims.x, &dims.y, &current_row, &meta};
+        CU_ERR(cuLaunchKernel(func, blocks.x, blocks.y, blocks.z, threads_per_block.x, threads_per_block.y, threads_per_block.z, 0, NULL, args, NULL));
+
+        CUDA_MEMCPY2D p;
+        p.srcXInBytes = p.srcY = 0;
+        p.srcMemoryType = CU_MEMORYTYPE_DEVICE;
+        p.srcDevice = pixels;
+        p.srcPitch = pitch;
+        p.dstXInBytes = 0;
+        p.dstY = current_row;
+        p.dstMemoryType = CU_MEMORYTYPE_HOST;
+        p.dstHost = h_pixels;
+        p.dstPitch = dims.x * 4 * sizeof(uint8_t);
+        p.WidthInBytes = dims.x * 4 * sizeof(uint8_t);
+        p.Height = blocks.y;
+
+        CU_ERR(cuMemcpy2D(&p));
+        CU_ERR(cuMemFree(pixels));
+
+        current_row += grid_height;
+      }
+    } break;
+    case 1: {
+      colored_point *points = (colored_point *)malloc(maxiter * nstartpoints * sizeof(colored_point));
+      unsigned long bigness = 100, npnts;
+      while (current_row < maxiter * nstartpoints) {
+        pixels = 0;
+        rng_states = 0;
+        
+        CU_ERR(cuModuleGetFunction(&func, module, "initrng"));
+        arc4random_buf(&seed, sizeof(seed));
+        CU_ERR(cuMemAlloc(&rng_states, sizeof(curandState) * threads_per_block.x * blocks.x));
+        void *args_rng[] = {&rng_states, &seed};
+        CU_ERR(cuLaunchKernel(func, blocks.x, blocks.y, blocks.z, threads_per_block.x, threads_per_block.y, threads_per_block.z, 0, NULL, args_rng, NULL));
+        CU_ERR(cuModuleGetFunction(&func, module, "gencoord"));
+
+        if (current_row + nstartpoints * bigness < maxiter * nstartpoints) {
+          npnts = bigness;
+        } else {
+          npnts = maxiter - current_row / nstartpoints;
+        }
+        CU_ERR(cuMemAlloc(&pixels, npnts * nstartpoints * sizeof(colored_point)));
+        void *args[] = {&pixels, &npnts, &meta, &rng_states};
+        CU_ERR(cuLaunchKernel(func, blocks.x, blocks.y, blocks.z, threads_per_block.x, threads_per_block.y, threads_per_block.z, 0, NULL, args, NULL));
+
+        CU_ERR(cuMemcpyDtoH((void *)((char *)points + sizeof(colored_point) * current_row), pixels, npnts * nstartpoints * sizeof(colored_point)));
+        CU_ERR(cuMemFree(rng_states));
+        CU_ERR(cuMemFree(pixels));
+
+        current_row += nstartpoints * npnts;
+        CU_ERR(cuMemcpyDtoH(h_meta, meta, sizeof(metadata)));
+        h_meta->first_run = false;
+        CU_ERR(cuMemcpyHtoD(meta, h_meta, sizeof(metadata)));
+      }
+      std::cout << "Placing pixels in pixel buffer" << std::endl;
+      size_t badp = 0;
+      for (i = 0; i < maxiter * nstartpoints; i++) {
+        colored_point pnt = points[i];
+        double pixel_size[2] = {(frame[1] - frame[0]) / (double)dims.x, (frame[3] - frame[2]) / (double)dims.y};
+        unsigned long loc[2] = {(unsigned long)(floor((pnt.coord[0] - frame[0]) / pixel_size[0])), (unsigned long)(floor((pnt.coord[1] - frame[2]) / pixel_size[1]))};
+        if (loc[0] >= dims.x || loc[1] >= dims.y) {
+          //std::cout << "Bad pixel found: " << loc[0] << ", " << loc[1] << " from coords: " << pnt.coord[0] << ", " << pnt.coord[1] << std::endl;
+          badp++;
+          continue;
+        }
+        h_pixels[loc[1] * dims.x * 4 + loc[0] * 4 + 0] = pnt.color[0];
+        h_pixels[loc[1] * dims.x * 4 + loc[0] * 4 + 1] = pnt.color[1];
+        h_pixels[loc[1] * dims.x * 4 + loc[0] * 4 + 2] = pnt.color[2];
+        h_pixels[loc[1] * dims.x * 4 + loc[0] * 4 + 3] = pnt.color[3];
+      }
+      std::cout << "Got " << badp << " / " << maxiter * nstartpoints << " bad points (" << (double)badp / (double)maxiter << ")" << std::endl;
+      free(points);
+    } break;
+  }
   std::cout << "Saving image" << std::endl;
 
   save_png(outfile, h_pixels, dims.x, dims.y);
