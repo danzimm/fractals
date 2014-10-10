@@ -35,9 +35,9 @@ void gencoord(colored_point *points, unsigned long npnts, metadata *meta, curand
     func_n = curand(&localState);
     points[ai].coord[0] = val.x;
     points[ai].coord[1] = val.y;
-    points[ai].color[0] = 0;
-    points[ai].color[1] = 255;
-    points[ai].color[2] = 0;
+    points[ai].color[0] = (uint8_t)(meta->color[0] * 255.0f);
+    points[ai].color[1] = (uint8_t)(meta->color[1] * 255.0f);
+    points[ai].color[2] = (uint8_t)(meta->color[2] * 255.0f);
     points[ai].color[3] = 255;
     val = iterate_point(val, i, initial_point, func_n);
     i++;

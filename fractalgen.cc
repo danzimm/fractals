@@ -47,9 +47,6 @@ void save_png(const char *filename, uint8_t *buffer, unsigned long width, unsign
   fclose(fp);
 }
 
-cudaError_t err = cudaSuccess;
-CUresult errr = CUDA_SUCCESS;
-
 void usage(const char *progname) {
   std::cout << progname << ", version " << VERSION << ", made by DanZimm" << std::endl << std::endl;
   std::cout << "usage: " << progname << " [-m MAX_TILE_HEIGHT] [-w WIDTH] [-h HEIGHT] [-o OUTFILE] [-z]" << std::endl;
@@ -127,7 +124,6 @@ int main(int argc, char *const argv[]) {
   const char *other_ptx_names[16];
   CUmodule module;
   CUdevice dev;
-  CUcontext ctx;
   CUfunction func;
   CUlinkState linkState;
   void *out_cubin = NULL;
@@ -143,6 +139,7 @@ int main(int argc, char *const argv[]) {
   size_t i;
   bool keeps_ratio = false;
   unsigned long long seed = 0;
+  size_t device_mem = 0, free_mem = 0;
   
   unsigned long maxiter = 100;
   float frame[4] = {-2.0, 2.0, -2.0, 2.0};
@@ -274,6 +271,7 @@ int main(int argc, char *const argv[]) {
 
   dev_id = fetch_best_device();
   CU_ERR(cuDeviceGet(&dev, dev_id));
+  CU_ERR(cuDeviceTotalMem(&device_mem, dev));
   CU_ERR(cuCtxCreate(&ctx, 0, dev));
 
 #define LOG_SIZE 4096
@@ -358,6 +356,8 @@ int main(int argc, char *const argv[]) {
   switch (fractal_type) {
     case 0: {
       CU_ERR(cuModuleGetFunction(&func, module, "genimage"));
+      blocks.y = grid_height;
+      CU_ERR(cuMemAllocPitch(&pixels, &pitch, dims.x * 4 * sizeof(uint8_t), blocks.y * threads_per_block.y, 4));
       while (current_row < dims.y) {
         pitch = 0;
         pixels = 0;
@@ -367,7 +367,6 @@ int main(int argc, char *const argv[]) {
         } else {
           blocks.y = dims.y - current_row;
         }
-        CU_ERR(cuMemAllocPitch(&pixels, &pitch, dims.x * 4 * sizeof(uint8_t), blocks.y * threads_per_block.y, 4));
         void *args[] = {&pixels, &pitch, &dims.x, &dims.y, &current_row, &meta};
         CU_ERR(cuLaunchKernel(func, blocks.x, blocks.y, blocks.z, threads_per_block.x, threads_per_block.y, threads_per_block.z, 0, NULL, args, NULL));
 
@@ -385,44 +384,47 @@ int main(int argc, char *const argv[]) {
         p.Height = blocks.y;
 
         CU_ERR(cuMemcpy2D(&p));
-        CU_ERR(cuMemFree(pixels));
 
-        current_row += grid_height;
+        current_row += blocks.y;
       }
+      CU_ERR(cuMemFree(pixels));
     } break;
     case 1: {
+      // TODO: fetch stuff from cuDeviceGetAttribute to ensure out thread_per_block and blocks objects are ok
+      CU_ERR(cuModuleGetFunction(&func, module, "gencoord"));
+      CUfunction rng;
+      CU_ERR(cuModuleGetFunction(&rng, module, "initrng"));
       colored_point *points = (colored_point *)malloc(maxiter * nstartpoints * sizeof(colored_point));
-      unsigned long bigness = 100, npnts;
+      CU_ERR(cuMemAlloc(&rng_states, sizeof(curandState) * threads_per_block.x * blocks.x));
+      CU_ERR(cuMemGetInfo(&free_mem, &device_mem));
+      unsigned long bigness = free_mem / (nstartpoints * sizeof(colored_point)), npnts = bigness;
+      // TODO: above doesnt work I can't use the total free memory, why??
+      bigness = 100000 < bigness ? 100000 : bigness;
+      npnts = bigness;
+      CU_ERR(cuMemAlloc(&pixels, npnts * nstartpoints * sizeof(colored_point)));
       while (current_row < maxiter * nstartpoints) {
-        pixels = 0;
-        rng_states = 0;
-        
-        CU_ERR(cuModuleGetFunction(&func, module, "initrng"));
-        arc4random_buf(&seed, sizeof(seed));
-        CU_ERR(cuMemAlloc(&rng_states, sizeof(curandState) * threads_per_block.x * blocks.x));
-        void *args_rng[] = {&rng_states, &seed};
-        CU_ERR(cuLaunchKernel(func, blocks.x, blocks.y, blocks.z, threads_per_block.x, threads_per_block.y, threads_per_block.z, 0, NULL, args_rng, NULL));
-        CU_ERR(cuModuleGetFunction(&func, module, "gencoord"));
 
+        arc4random_buf(&seed, sizeof(seed));
+        void *args_rng[] = {&rng_states, &seed};
+        CU_ERR(cuLaunchKernel(rng, blocks.x, blocks.y, blocks.z, threads_per_block.x, threads_per_block.y, threads_per_block.z, 0, NULL, args_rng, NULL));
+        
         if (current_row + nstartpoints * bigness < maxiter * nstartpoints) {
           npnts = bigness;
         } else {
           npnts = maxiter - current_row / nstartpoints;
         }
-        CU_ERR(cuMemAlloc(&pixels, npnts * nstartpoints * sizeof(colored_point)));
         void *args[] = {&pixels, &npnts, &meta, &rng_states};
         CU_ERR(cuLaunchKernel(func, blocks.x, blocks.y, blocks.z, threads_per_block.x, threads_per_block.y, threads_per_block.z, 0, NULL, args, NULL));
-
+        
         CU_ERR(cuMemcpyDtoH((void *)((char *)points + sizeof(colored_point) * current_row), pixels, npnts * nstartpoints * sizeof(colored_point)));
-        CU_ERR(cuMemFree(rng_states));
-        CU_ERR(cuMemFree(pixels));
 
         current_row += nstartpoints * npnts;
-        CU_ERR(cuMemcpyDtoH(h_meta, meta, sizeof(metadata)));
-        h_meta->first_run = false;
-        CU_ERR(cuMemcpyHtoD(meta, h_meta, sizeof(metadata)));
+        if (h_meta->first_run) {
+          CU_ERR(cuMemcpyDtoH(h_meta, meta, sizeof(metadata)));
+          h_meta->first_run = false;
+          CU_ERR(cuMemcpyHtoD(meta, h_meta, sizeof(metadata)));
+        }
       }
-      std::cout << "Placing pixels in pixel buffer" << std::endl;
       size_t badp = 0;
       for (i = 0; i < maxiter * nstartpoints; i++) {
         colored_point pnt = points[i];
@@ -439,6 +441,8 @@ int main(int argc, char *const argv[]) {
         h_pixels[loc[1] * dims.x * 4 + loc[0] * 4 + 3] = pnt.color[3];
       }
       //std::cout << "Got " << badp << " / " << maxiter * nstartpoints << " bad points (" << (double)badp / (double)maxiter << ")" << std::endl;
+      CU_ERR(cuMemFree(rng_states));
+      CU_ERR(cuMemFree(pixels));
       free(points);
     } break;
   }

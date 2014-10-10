@@ -9,11 +9,16 @@
 #define MAX(a,b) (a > b ? a : b)
 #endif
 
+CUresult errr = CUDA_SUCCESS;
+CUcontext ctx = NULL;
+
 #define CU_ERR(e) \
   if ((errr = e) != CUDA_SUCCESS) { \
     const char *errstr; \
     cuGetErrorString(errr, &errstr); \
     fprintf(stderr, "CUDA driver err at `%s' %d: %s\n", #e, errr, errstr); \
+    if (ctx) \
+      cuCtxDestroy(ctx); \
     exit(-1); \
   } \
 
