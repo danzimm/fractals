@@ -328,6 +328,10 @@ int main(int argc, char *const argv[]) {
   */
   
   h_pixels = (uint8_t *)malloc(dims.x * 4 * sizeof(uint8_t) * dims.y);
+  if (!h_pixels) {
+    std::cerr << "Failed to allocate pixel buffer" << std::endl;
+    exit(-1);
+  }
   size_t j;
   for (j = 0; j < dims.y; j++) {
     for (i = 0; i < dims.x; i++) {
@@ -359,8 +363,6 @@ int main(int argc, char *const argv[]) {
       blocks.y = grid_height;
       CU_ERR(cuMemAllocPitch(&pixels, &pitch, dims.x * 4 * sizeof(uint8_t), blocks.y * threads_per_block.y, 4));
       while (current_row < dims.y) {
-        pitch = 0;
-        pixels = 0;
         
         if (current_row + grid_height < dims.y) {
           blocks.y = grid_height;
