@@ -19,6 +19,7 @@ Check out the source of `fractalgen` to see how the program works, use `-z` to s
 - Add node backend to communicate to this library
 - Add website frontend
 - Add ability for modules to define their own defaults 
+- Fix `wood.cu` and other cuda modules that are broken after api upgrade??
 
 # Some Notes
 
