@@ -19,7 +19,7 @@ double2 fetch_initial_point(unsigned long i) {
 }
 
 __device__
-double2 iterate_point(double2 val, unsigned long i, double2 ipnt, unsigned long func_n) {
+double2 iterate_value(double2 val, unsigned long i, double2 ipnt, unsigned long func_n) {
   func_n = func_n % npnts;
   return (double)(func_n+1) / (double)npnts * (val + pnts[func_n]);
 }
