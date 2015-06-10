@@ -1,9 +1,0 @@
-{
-  "name": "fractalgiffer",
-  "author": "Dan Zimmerman<daniel.zimmerman@me.com>",
-  "description": "Utility to use with my cli utility `fractalgen` to create gifs of fractals. Requires ImageMagik's `convert`",
-  "dependencies": {
-    "optparse": "*"
-  },
-  "private": true
-}

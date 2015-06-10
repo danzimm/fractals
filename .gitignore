@@ -1,7 +1,5 @@
 .DS_Store
-fractalgen
 out.png
 *.o
 node_modules
 *.ptx
-include/ptx.h
